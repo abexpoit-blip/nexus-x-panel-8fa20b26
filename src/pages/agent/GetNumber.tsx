@@ -32,12 +32,9 @@ const AgentGetNumber = () => {
   const dailyLimit = user?.daily_limit ?? 100;
   const usedToday = numbers.length;
 
-  // Load providers + my numbers on mount
+  // Force AccHub only — provider name hidden from agents
   useEffect(() => {
-    api.providers().then(({ providers }) => {
-      setProviders(providers);
-      if (providers[0]) setProvider(providers[0].id);
-    }).catch((e) => toast({ title: "Provider load failed", description: e.message, variant: "destructive" }));
+    setProvider("acchub");
     api.myNumbers().then(({ numbers }) => setNumbers(numbers as any)).catch(() => {});
   }, []);
 
