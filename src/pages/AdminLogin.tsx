@@ -113,7 +113,19 @@ const AdminLogin = () => {
             </Button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-white/[0.04] text-center">
+          {/* Demo credentials hint (remove in production) */}
+          <div className="mt-6 p-3 rounded-lg bg-neon-amber/[0.06] border border-neon-amber/20">
+            <p className="text-[10px] uppercase tracking-wider text-neon-amber font-semibold mb-1.5">Demo Credentials</p>
+            <div className="space-y-0.5 font-mono text-xs text-muted-foreground">
+              <p>Username: <span className="text-foreground">admin</span></p>
+              <p>Password: <span className="text-foreground">admin123</span></p>
+            </div>
+            <p className="text-[10px] text-muted-foreground/60 mt-2">
+              ⚠️ Use the seeder script on your VPS to create this admin user
+            </p>
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-white/[0.04] text-center">
             <p className="text-[10px] text-muted-foreground/40 font-mono">
               Nexus X {APP_VERSION} · Secure Admin Gateway
             </p>

@@ -57,6 +57,16 @@ export type Notification = {
   id: number; user_id: number | null; title: string; message: string;
   type: string; is_read: number; created_at: number;
 };
+export type AuditLog = {
+  id: number; user_id: number | null; username?: string; action: string;
+  target_type?: string; target_id?: string | number; meta?: string;
+  ip?: string; user_agent?: string; created_at: number;
+};
+export type Session = {
+  id: number; user_id: number; username?: string; ip: string;
+  user_agent: string; device?: string; browser?: string;
+  created_at: number; last_seen_at: number; current?: boolean;
+};
 
 export const api = {
   // Auth
@@ -121,7 +131,25 @@ export const api = {
       request("/notifications/broadcast", { method: "POST", body: JSON.stringify(body) }),
   },
 
-  // Settings
+  // Audit Logs (Phase 4 — Enterprise security)
+  audit: {
+    list: (params?: { limit?: number; user_id?: number; action?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set("limit", String(params.limit));
+      if (params?.user_id) q.set("user_id", String(params.user_id));
+      if (params?.action) q.set("action", params.action);
+      const qs = q.toString();
+      return request<{ logs: AuditLog[] }>(`/audit${qs ? "?" + qs : ""}`);
+    },
+  },
+
+  // Sessions (Phase 4 — active devices, remote logout)
+  sessions: {
+    mine: () => request<{ sessions: Session[] }>("/sessions/mine"),
+    all: () => request<{ sessions: Session[] }>("/sessions"),
+    revoke: (id: number) => request(`/sessions/${id}`, { method: "DELETE" }),
+    revokeAllOthers: () => request(`/sessions/others`, { method: "DELETE" }),
+  },
   settings: {
     getPublic: () => request<{ signup_enabled: boolean }>("/settings/public"),
     getAll: () => request<{ settings: Record<string, string> }>("/settings"),
