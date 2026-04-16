@@ -107,7 +107,21 @@ const AdminRateCard = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => save.mutate(form)} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+            <Button
+              onClick={() => {
+                const payload: any = {
+                  provider: form.provider,
+                  country_code: form.country_code || null,
+                  country_name: form.country_name || null,
+                  operator: form.operator || null,
+                  price_bdt: Number(form.price_bdt) || 0,
+                  active: !!form.active,
+                };
+                if (form.id) payload.id = form.id;
+                save.mutate(payload);
+              }}
+              disabled={save.isPending}
+            >{save.isPending ? "Saving…" : "Save"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
