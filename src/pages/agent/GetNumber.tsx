@@ -41,13 +41,11 @@ const AgentGetNumber = () => {
     api.myNumbers().then(({ numbers }) => setNumbers(numbers as any)).catch(() => {});
   }, []);
 
-  // Load countries when provider changes (AccHub only — MSI uses pool)
+  // Load countries when provider changes (auto-loaded, hidden from agent)
   useEffect(() => {
     if (!provider) return;
     setCountries([]); setCountryId(""); setOperators([]); setOperatorId("");
-    if (provider === "acchub") {
-      api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => {});
-    }
+    api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => {});
   }, [provider]);
 
   // Load operators when country changes
@@ -128,52 +126,35 @@ const AgentGetNumber = () => {
       <GlassCard glow="cyan">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">Provider</label>
+            <label className="text-sm font-medium text-muted-foreground">Country</label>
             <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              value={countryId}
+              onChange={(e) => setCountryId(e.target.value ? Number(e.target.value) : "")}
               className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
-              <option value="" className="bg-card">Select provider</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id} className="bg-card">{p.name}</option>
+              <option value="" className="bg-card">Select country</option>
+              {countries.map((c) => (
+                <option key={c.id} value={c.id} className="bg-card">{c.name}</option>
               ))}
             </select>
           </div>
-          {provider === "acchub" && (
-            <>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">Country</label>
-                <select
-                  value={countryId}
-                  onChange={(e) => setCountryId(e.target.value ? Number(e.target.value) : "")}
-                  className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                >
-                  <option value="" className="bg-card">Select country</option>
-                  {countries.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-card">{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">Operator</label>
-                <select
-                  value={operatorId}
-                  onChange={(e) => setOperatorId(e.target.value ? Number(e.target.value) : "")}
-                  disabled={!countryId}
-                  className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50"
-                >
-                  <option value="" className="bg-card">Select operator</option>
-                  {operators.map((o) => (
-                    <option key={o.id} value={o.id} className="bg-card">{o.name}</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">Operator</label>
+            <select
+              value={operatorId}
+              onChange={(e) => setOperatorId(e.target.value ? Number(e.target.value) : "")}
+              disabled={!countryId}
+              className="w-full h-11 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50"
+            >
+              <option value="" className="bg-card">Select operator</option>
+              {operators.map((o) => (
+                <option key={o.id} value={o.id} className="bg-card">{o.name}</option>
+              ))}
+            </select>
+          </div>
           <Button
             onClick={handleGetNumber}
-            disabled={!provider || loading || usedToday >= dailyLimit || (provider === "acchub" && !operatorId)}
+            disabled={!provider || loading || usedToday >= dailyLimit || !operatorId}
             className="h-11 bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0"
           >
             {loading ? (
