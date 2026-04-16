@@ -41,13 +41,11 @@ const AgentGetNumber = () => {
     api.myNumbers().then(({ numbers }) => setNumbers(numbers as any)).catch(() => {});
   }, []);
 
-  // Load countries when provider changes (AccHub only — MSI uses pool)
+  // Load countries when provider changes (auto-loaded, hidden from agent)
   useEffect(() => {
     if (!provider) return;
     setCountries([]); setCountryId(""); setOperators([]); setOperatorId("");
-    if (provider === "acchub") {
-      api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => {});
-    }
+    api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => {});
   }, [provider]);
 
   // Load operators when country changes
