@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { TableSkeleton } from "./TableSkeleton";
 
 interface Column<T> {
   key: string;
@@ -12,6 +13,8 @@ interface DataTableProps<T> {
   data: T[];
   className?: string;
   onRowClick?: (row: T) => void;
+  loading?: boolean;
+  emptyText?: string;
 }
 
 export function DataTable<T extends Record<string, any>>({
@@ -19,7 +22,13 @@ export function DataTable<T extends Record<string, any>>({
   data,
   className,
   onRowClick,
+  loading,
+  emptyText = "No data available",
 }: DataTableProps<T>) {
+  if (loading && data.length === 0) {
+    return <TableSkeleton rows={6} cols={columns.length} className={className} />;
+  }
+
   return (
     <div className={cn("glass-card overflow-hidden", className)}>
       <div className="overflow-x-auto scrollbar-none">
@@ -56,10 +65,10 @@ export function DataTable<T extends Record<string, any>>({
                 ))}
               </tr>
             ))}
-            {data.length === 0 && (
+            {data.length === 0 && !loading && (
               <tr>
                 <td colSpan={columns.length} className="px-4 py-8 text-center text-muted-foreground text-sm">
-                  No data available
+                  {emptyText}
                 </td>
               </tr>
             )}
