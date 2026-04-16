@@ -4,7 +4,8 @@ import { AnimatedOutlet } from "@/components/AnimatedOutlet";
 import { useAuth, type UserRole } from "@/contexts/AuthContext";
 import { AppSidebar } from "./Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
-import { Menu, Wallet } from "lucide-react";
+import { CommandPalette } from "@/components/CommandPalette";
+import { Menu, Wallet, Search } from "lucide-react";
 
 interface AppLayoutProps {
   requiredRole: UserRole;
@@ -19,6 +20,7 @@ export const AppLayout = ({ requiredRole }: AppLayoutProps) => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <CommandPalette />
       <AppSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -31,7 +33,20 @@ export const AppLayout = ({ requiredRole }: AppLayoutProps) => {
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="flex-1" />
+          <div className="flex-1 flex items-center">
+            <button
+              onClick={() => {
+                // Trigger command palette via synthetic Cmd+K event
+                window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+              }}
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg glass text-sm text-muted-foreground hover:text-foreground hover:bg-white/[0.06] transition-colors w-72"
+              aria-label="Open command palette"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>Search or jump to…</span>
+              <kbd className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.08] border border-white/[0.1]">⌘K</kbd>
+            </button>
+          </div>
 
           <div className="flex items-center gap-3">
             {user?.role === "agent" && (

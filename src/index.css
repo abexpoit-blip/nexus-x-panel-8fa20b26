@@ -147,3 +147,52 @@
   50% { opacity: 0.06; }
   100% { opacity: 0.02; }
 }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes gradient-border-spin {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@layer utilities {
+  .shimmer-bar {
+    background: linear-gradient(
+      90deg,
+      hsl(240 10% 12%) 0%,
+      hsl(240 10% 18%) 50%,
+      hsl(240 10% 12%) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+
+  .gradient-border-glow {
+    position: relative;
+    isolation: isolate;
+  }
+  .gradient-border-glow::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      120deg,
+      hsl(185 100% 50% / 0.6),
+      hsl(300 100% 45% / 0.6),
+      hsl(185 100% 50% / 0.6)
+    );
+    background-size: 200% 200%;
+    animation: gradient-border-spin 4s linear infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+}

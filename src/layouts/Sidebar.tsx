@@ -82,16 +82,21 @@ export const AppSidebar = ({ open, onClose }: SidebarProps) => {
                 to={item.path}
                 onClick={onClose}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
+                  "group relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-300",
                   active
-                    ? "bg-primary/10 text-primary neon-border-cyan border"
-                    : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04]"
+                    ? "text-primary gradient-border-glow bg-gradient-to-r from-primary/15 via-primary/5 to-transparent shadow-[0_0_20px_-5px_hsl(185_100%_50%/0.4)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-white/[0.04] hover:translate-x-0.5"
                 )}
               >
-                <item.icon className={cn("w-4.5 h-4.5", active && "text-primary")} />
+                <item.icon
+                  className={cn(
+                    "w-4.5 h-4.5 transition-transform duration-300 group-hover:scale-110",
+                    active && "text-primary drop-shadow-[0_0_6px_hsl(185_100%_50%/0.8)]"
+                  )}
+                />
                 <span className="flex-1">{item.label}</span>
                 {item.path === "/agent/inbox" && unreadAnnouncements > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-neon-magenta/20 text-neon-magenta min-w-[18px] text-center">
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-neon-magenta/20 text-neon-magenta min-w-[18px] text-center animate-pulse">
                     {unreadAnnouncements > 9 ? "9+" : unreadAnnouncements}
                   </span>
                 )}
