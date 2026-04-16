@@ -1,0 +1,112 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, type Agent } from "@/lib/api";
+import { DataTable } from "@/components/DataTable";
+import { GlassCard } from "@/components/GlassCard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sliders, Pencil } from "lucide-react";
+import { toast } from "sonner";
+
+const AdminAllocation = () => {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState<Agent | null>(null);
+  const [daily, setDaily] = useState(0);
+  const [perReq, setPerReq] = useState(0);
+
+  const { data } = useQuery({ queryKey: ["agents"], queryFn: () => api.admin.agents() });
+  const { data: alloc } = useQuery({ queryKey: ["all-allocations"], queryFn: () => api.admin.allocations(), refetchInterval: 15000 });
+
+  const save = useMutation({
+    mutationFn: () => api.admin.updateAgent(editing!.id, { daily_limit: daily, per_request_limit: perReq }),
+    onSuccess: () => {
+      toast.success("Limits updated");
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      setEditing(null);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const openEdit = (a: Agent) => {
+    setEditing(a);
+    setDaily(a.daily_limit);
+    setPerReq(a.per_request_limit);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
+          <Sliders className="w-7 h-7 text-neon-amber" /> Allocation & Limits
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">Per-agent daily and per-request quotas</p>
+      </div>
+
+      <GlassCard className="p-0">
+        <div className="p-4 border-b border-white/[0.04]">
+          <h3 className="font-display font-semibold">Agent Limits</h3>
+        </div>
+        <DataTable
+          className="border-0 rounded-none"
+          columns={[
+            { key: "username", header: "Agent", render: (r) => <span className="font-semibold">{r.username}</span> },
+            { key: "daily_limit", header: "Daily limit", render: (r) => <span className="font-mono">{r.daily_limit}</span> },
+            { key: "per_request_limit", header: "Per request", render: (r) => <span className="font-mono">{r.per_request_limit}</span> },
+            { key: "otp_count", header: "Total OTPs", render: (r) => r.otp_count.toLocaleString() },
+            {
+              key: "actions",
+              header: "",
+              render: (r) => (
+                <button onClick={() => openEdit(r)} className="text-primary hover:underline text-xs flex items-center gap-1">
+                  <Pencil className="w-3 h-3" /> Edit limits
+                </button>
+              ),
+            },
+          ]}
+          data={data?.agents || []}
+        />
+      </GlassCard>
+
+      <GlassCard className="p-0">
+        <div className="p-4 border-b border-white/[0.04]">
+          <h3 className="font-display font-semibold">Live Allocations</h3>
+        </div>
+        <DataTable
+          className="border-0 rounded-none"
+          columns={[
+            { key: "username", header: "Agent", render: (r) => r.username || `#${r.user_id}` },
+            { key: "phone_number", header: "Number", render: (r) => <span className="font-mono">{r.phone_number}</span> },
+            { key: "provider", header: "Provider", render: (r) => <span className="uppercase text-xs">{r.provider}</span> },
+            { key: "operator", header: "Operator", render: (r) => r.operator || "—" },
+            { key: "status", header: "Status" },
+            { key: "allocated_at", header: "Time", render: (r) => new Date(r.allocated_at * 1000).toLocaleString() },
+          ]}
+          data={alloc?.allocations || []}
+        />
+      </GlassCard>
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="glass-card border-white/10">
+          <DialogHeader><DialogTitle>Edit Limits — {editing?.username}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Daily limit</label>
+              <Input type="number" value={daily} onChange={(e) => setDaily(+e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Per-request limit</label>
+              <Input type="number" value={perReq} onChange={(e) => setPerReq(+e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default AdminAllocation;
