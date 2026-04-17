@@ -19,6 +19,35 @@ const COUNTRIES = ["BD", "IN", "PK", "ID", "PH", "VN"];
 const PROVIDERS = ["msi_sms", "ims_sms", "asshub", "seventtel"];
 const AGENTS = ["rakib_x", "shanto", "tanvir", "ovi_pro", "rifat", "demo_agent", "milon", "arif_k"];
 
+// Real country + operator catalog (mirrors AccHub + IMS coverage)
+const COUNTRY_CATALOG: { id: number; name: string; code: string; operators: string[] }[] = [
+  { id: 1,  name: "Bangladesh (+880)",  code: "880",  operators: ["Grameenphone", "Robi", "Banglalink", "Airtel", "Teletalk", "Any"] },
+  { id: 2,  name: "India (+91)",         code: "91",   operators: ["Jio", "Airtel", "Vi (Vodafone Idea)", "BSNL", "Any"] },
+  { id: 3,  name: "Pakistan (+92)",      code: "92",   operators: ["Jazz", "Zong", "Telenor", "Ufone", "Any"] },
+  { id: 4,  name: "Indonesia (+62)",     code: "62",   operators: ["Telkomsel", "Indosat", "XL Axiata", "Tri", "Smartfren", "Any"] },
+  { id: 5,  name: "Philippines (+63)",   code: "63",   operators: ["Globe", "Smart", "DITO", "TNT", "Any"] },
+  { id: 6,  name: "Vietnam (+84)",       code: "84",   operators: ["Viettel", "Vinaphone", "Mobifone", "Vietnamobile", "Any"] },
+  { id: 7,  name: "Nigeria (+234)",      code: "234",  operators: ["MTN", "Airtel", "Glo", "9mobile", "Any"] },
+  { id: 8,  name: "Kenya (+254)",        code: "254",  operators: ["Safaricom", "Airtel", "Telkom", "Any"] },
+  { id: 9,  name: "Myanmar (+95)",       code: "95",   operators: ["MPT", "Ooredoo", "Atom (Telenor)", "Mytel", "Any"] },
+  { id: 10, name: "Sri Lanka (+94)",     code: "94",   operators: ["Dialog", "Mobitel", "Hutch", "Airtel", "Any"] },
+  { id: 11, name: "Nepal (+977)",        code: "977",  operators: ["Ncell", "NTC", "Smart Cell", "Any"] },
+  { id: 12, name: "Cambodia (+855)",     code: "855",  operators: ["Smart", "Cellcard", "Metfone", "Any"] },
+  { id: 13, name: "Thailand (+66)",      code: "66",   operators: ["AIS", "TrueMove", "DTAC", "Any"] },
+  { id: 14, name: "Malaysia (+60)",      code: "60",   operators: ["Maxis", "Celcom", "Digi", "U Mobile", "Any"] },
+  { id: 15, name: "UAE (+971)",          code: "971",  operators: ["Etisalat", "du", "Any"] },
+  { id: 16, name: "Saudi Arabia (+966)", code: "966",  operators: ["STC", "Mobily", "Zain", "Any"] },
+  { id: 17, name: "Egypt (+20)",         code: "20",   operators: ["Vodafone", "Orange", "Etisalat", "WE", "Any"] },
+  { id: 18, name: "South Africa (+27)",  code: "27",   operators: ["Vodacom", "MTN", "Cell C", "Telkom", "Any"] },
+  { id: 19, name: "Brazil (+55)",        code: "55",   operators: ["Vivo", "Claro", "TIM", "Oi", "Any"] },
+  { id: 20, name: "Mexico (+52)",        code: "52",   operators: ["Telcel", "Movistar", "AT&T", "Any"] },
+  { id: 21, name: "USA (+1)",            code: "1",    operators: ["Verizon", "T-Mobile", "AT&T", "Any"] },
+  { id: 22, name: "UK (+44)",            code: "44",   operators: ["EE", "O2", "Vodafone", "Three", "Any"] },
+  { id: 23, name: "Russia (+7)",         code: "7",    operators: ["MTS", "MegaFon", "Beeline", "Tele2", "Any"] },
+  { id: 24, name: "Turkey (+90)",        code: "90",   operators: ["Turkcell", "Vodafone", "Türk Telekom", "Any"] },
+  { id: 25, name: "China (+86)",         code: "86",   operators: ["China Mobile", "China Unicom", "China Telecom", "Any"] },
+];
+
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
