@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GradientMesh, PageHeader } from "@/components/premium";
-import { Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText, AlertTriangle, RefreshCw, Power, Info, Play, Square, KeyRound, Save, Eye, EyeOff } from "lucide-react";
+import { Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText, AlertTriangle, RefreshCw, Power, Info, Play, Square, KeyRound, Save, Eye, EyeOff, Zap, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -61,10 +61,16 @@ const Stat = ({ icon, label, value, hint, accent }: {
 
 const AdminImsStatus = () => {
   const [restarting, setRestarting] = useState(false);
+  const [scraping, setScraping] = useState(false);
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["ims-status"],
     queryFn: () => api.admin.imsStatus(),
     refetchInterval: 5000,
+  });
+  const { data: poolData, refetch: refetchPool } = useQuery({
+    queryKey: ["ims-pool-breakdown"],
+    queryFn: () => api.admin.imsPoolBreakdown(),
+    refetchInterval: 10000,
   });
   const s = data?.status as ImsStatus | undefined;
 
@@ -83,6 +89,23 @@ const AdminImsStatus = () => {
       toast.error(`${labels[action]} failed: ` + (e as Error).message);
     } finally {
       setRestarting(false);
+    }
+  };
+
+  const handleScrapeNow = async () => {
+    setScraping(true);
+    try {
+      const r = await api.admin.imsScrapeNow();
+      if (r.ok) {
+        toast.success(`Scrape complete: +${r.added ?? 0} numbers, ${r.otps ?? 0} OTPs delivered`);
+      } else {
+        toast.error(r.error || "Scrape failed");
+      }
+      refetch(); refetchPool();
+    } catch (e) {
+      toast.error("Scrape failed: " + (e as Error).message);
+    } finally {
+      setScraping(false);
     }
   };
 
@@ -114,6 +137,15 @@ const AdminImsStatus = () => {
               </button>
             )}
             <button
+              onClick={handleScrapeNow}
+              disabled={scraping || !s?.running}
+              title={!s?.running ? "Start the bot first" : "Run a scrape cycle right now"}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs font-semibold bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan hover:bg-neon-cyan/20 transition disabled:opacity-50"
+            >
+              <Zap className={cn("w-3.5 h-3.5", scraping && "animate-pulse")} />
+              {scraping ? "Scraping…" : "Scrape Now"}
+            </button>
+            <button
               onClick={() => handleAction("restart")}
               disabled={restarting}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs font-semibold bg-neon-magenta/10 border border-neon-magenta/30 text-neon-magenta hover:bg-neon-magenta/20 transition disabled:opacity-50"
@@ -121,7 +153,7 @@ const AdminImsStatus = () => {
               <Power className={cn("w-3.5 h-3.5", restarting && "animate-spin")} /> {restarting ? "Working…" : "Restart"}
             </button>
             <button
-              onClick={() => refetch()}
+              onClick={() => { refetch(); refetchPool(); }}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs font-semibold bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition"
             >
               <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} /> Refresh
