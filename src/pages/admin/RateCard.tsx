@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tag, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { GradientMesh, PageHeader } from "@/components/premium";
 
 const empty: Partial<Rate> = { provider: "msi", country_code: "", country_name: "", operator: "", price_bdt: 0, active: 1 };
 
@@ -35,18 +36,19 @@ const AdminRateCard = () => {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-            <Tag className="w-7 h-7 text-neon-magenta" /> Rate Card
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">Pricing per provider, country and operator (BDT)</p>
-        </div>
-        <Button onClick={() => { setForm(empty); setOpen(true); }} className="bg-primary text-primary-foreground">
-          <Plus className="w-4 h-4 mr-2" /> New Rate
-        </Button>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Pricing"
+        title="Rate Card"
+        description="Pricing per provider, country and operator (BDT)"
+        icon={<Tag className="w-5 h-5 text-neon-magenta" />}
+        actions={
+          <Button onClick={() => { setForm(empty); setOpen(true); }} className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0">
+            <Plus className="w-4 h-4 mr-2" /> New Rate
+          </Button>
+        }
+      />
 
       <DataTable
         columns={[

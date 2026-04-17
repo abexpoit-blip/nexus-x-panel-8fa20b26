@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { GradientMesh, PageHeader, PremiumKpiCard } from "@/components/premium";
 import { api } from "@/lib/api";
 
 const actionColor = (action: string) => {
@@ -69,19 +70,20 @@ const AdminSecurity = () => {
   ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-          <Shield className="w-7 h-7 text-neon-magenta" /> Security Center
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Audit trail, active sessions, and access controls</p>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Access Control"
+        title="Security Center"
+        description="Audit trail, active sessions, and access controls"
+        icon={<Shield className="w-5 h-5 text-neon-magenta" />}
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard label="Total Audit Events" value={auditData?.logs.length || 0} icon={ScrollText} color="cyan" />
-        <StatCard label="Active Sessions" value={sessions.length} icon={Monitor} color="green" />
-        <StatCard label="Unique Users Online" value={new Set(sessions.map((s) => s.user_id)).size} icon={UserCheck} color="magenta" />
-        <StatCard label="Mobile Devices" value={sessions.filter((s) => /Mobile|Android|iPhone/i.test(s.user_agent)).length} icon={Smartphone} color="amber" />
+        <PremiumKpiCard label="Audit Events" value={auditData?.logs?.length || 0} icon={ScrollText} tone="cyan" />
+        <PremiumKpiCard label="Active Sessions" value={sessions.length} icon={Monitor} tone="green" />
+        <PremiumKpiCard label="Unique Online" value={new Set(sessions.map((s) => s.user_id)).size} icon={UserCheck} tone="magenta" />
+        <PremiumKpiCard label="Mobile Devices" value={sessions.filter((s) => /Mobile|Android|iPhone/i.test(s.user_agent)).length} icon={Smartphone} tone="amber" />
       </div>
 
       <div className="flex gap-1 p-1 glass rounded-xl w-fit overflow-x-auto">

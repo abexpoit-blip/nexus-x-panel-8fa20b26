@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Receipt, Search, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { GradientMesh, PageHeader } from "@/components/premium";
 
 const AdminCDR = () => {
   const qc = useQueryClient();
@@ -34,13 +35,14 @@ const AdminCDR = () => {
   }, [data, q]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-          <Receipt className="w-7 h-7 text-primary" /> Call Detail Records
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">All billable events across the platform</p>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Billing"
+        title="Call Detail Records"
+        description="All billable events across the platform · auto-refresh 20s"
+        icon={<Receipt className="w-5 h-5 text-neon-cyan" />}
+      />
 
       <GlassCard className="p-4">
         <div className="relative">

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Megaphone, Send } from "lucide-react";
 import { toast } from "sonner";
+import { GradientMesh, PageHeader } from "@/components/premium";
 
 const AdminNotifications = () => {
   const qc = useQueryClient();
@@ -32,13 +33,14 @@ const AdminNotifications = () => {
   });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-          <Megaphone className="w-7 h-7 text-neon-magenta" /> Notifications
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Broadcast or send targeted messages to agents</p>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Communication"
+        title="Notifications"
+        description="Broadcast or send targeted messages to agents"
+        icon={<Megaphone className="w-5 h-5 text-neon-magenta" />}
+      />
 
       <GlassCard>
         <h3 className="font-display font-semibold mb-4">Compose</h3>

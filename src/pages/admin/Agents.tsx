@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Users, Plus, Pencil, Trash2, Search, Wallet, UserCheck, UserX, Power } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { GradientMesh, PageHeader, PremiumKpiCard } from "@/components/premium";
 
 type AgentForm = {
   id?: number;
@@ -97,42 +98,25 @@ const AdminAgents = () => {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-            <Users className="w-7 h-7 text-primary" /> Agents
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage all agent accounts</p>
-        </div>
-        <Button onClick={() => { setForm(empty); setOpen(true); }} className="bg-primary text-primary-foreground">
-          <Plus className="w-4 h-4 mr-2" /> New Agent
-        </Button>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Team Management"
+        title="Agents"
+        description="Manage all agent accounts, balances and limits"
+        icon={<Users className="w-5 h-5 text-neon-cyan" />}
+        actions={
+          <Button onClick={() => { setForm(empty); setOpen(true); }} className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0">
+            <Plus className="w-4 h-4 mr-2" /> New Agent
+          </Button>
+        }
+      />
 
       {/* KPI strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <GlassCard className="p-4 flex items-center gap-3">
-          <Users className="w-8 h-8 text-primary" />
-          <div>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Total</p>
-            <p className="text-2xl font-display font-bold text-foreground">{stats.total}</p>
-          </div>
-        </GlassCard>
-        <GlassCard className="p-4 flex items-center gap-3">
-          <UserCheck className="w-8 h-8 text-neon-green" />
-          <div>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Active</p>
-            <p className="text-2xl font-display font-bold text-neon-green">{stats.active}</p>
-          </div>
-        </GlassCard>
-        <GlassCard className="p-4 flex items-center gap-3">
-          <UserX className="w-8 h-8 text-destructive" />
-          <div>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Suspended</p>
-            <p className="text-2xl font-display font-bold text-destructive">{stats.suspended}</p>
-          </div>
-        </GlassCard>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <PremiumKpiCard label="Total Agents" value={stats.total} icon={Users} tone="cyan" />
+        <PremiumKpiCard label="Active" value={stats.active} icon={UserCheck} tone="green" />
+        <PremiumKpiCard label="Suspended" value={stats.suspended} icon={UserX} tone="magenta" />
       </div>
 
       <GlassCard className="p-4">

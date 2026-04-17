@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sliders, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { GradientMesh, PageHeader } from "@/components/premium";
 
 const AdminAllocation = () => {
   const qc = useQueryClient();
@@ -35,13 +36,14 @@ const AdminAllocation = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-display font-bold text-foreground flex items-center gap-2">
-          <Sliders className="w-7 h-7 text-neon-amber" /> Allocation & Limits
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">Per-agent daily and per-request quotas</p>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Quotas"
+        title="Allocation & Limits"
+        description="Per-agent daily and per-request quotas + live allocations"
+        icon={<Sliders className="w-5 h-5 text-neon-amber" />}
+      />
 
       <GlassCard className="p-0">
         <div className="p-4 border-b border-white/[0.04]">

@@ -2,8 +2,9 @@ import { useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Settings, Trash2, CheckCircle, XCircle, Wifi } from "lucide-react";
+import { Plus, Settings, Trash2, CheckCircle, XCircle, Wifi, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GradientMesh, PageHeader } from "@/components/premium";
 
 interface Provider {
   id: string;
@@ -26,20 +27,23 @@ const AdminProviders = () => {
   const [showAdd, setShowAdd] = useState(false);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-display font-bold text-foreground">Providers</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage upstream IPRN/SMS API providers</p>
-        </div>
-        <Button
-          onClick={() => setShowAdd(!showAdd)}
-          className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Provider
-        </Button>
-      </div>
+    <div className="relative space-y-6">
+      <GradientMesh variant="default" />
+      <PageHeader
+        eyebrow="Infrastructure"
+        title="SMS Providers"
+        description="Manage upstream IPRN/SMS API providers"
+        icon={<Server className="w-5 h-5 text-neon-cyan" />}
+        actions={
+          <Button
+            onClick={() => setShowAdd(!showAdd)}
+            className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add Provider
+          </Button>
+        }
+      />
 
       {showAdd && (
         <GlassCard glow="cyan">
