@@ -40,12 +40,12 @@ async function pollOnce() {
 }
 
 function start() {
-  // node-cron doesn't support sub-minute cleanly; use setInterval
   setInterval(pollOnce, INTERVAL * 1000);
-  console.log(`✓ OTP poller started (every ${INTERVAL}s)`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`✓ OTP poller started (every ${INTERVAL}s)`);
+  }
 
   // Every 1 minute: expire stale 'active' allocations (>10 min, no OTP).
-  // Agent's balance is NOT touched — number was free; only the slot is released.
   cron.schedule('* * * * *', () => {
     const r = db.prepare(`
       UPDATE allocations SET status = 'expired'
