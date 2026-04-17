@@ -153,21 +153,60 @@ async function login() {
   await page.click(passSel, { clickCount: 3 }).catch(() => {});
   await page.type(passSel, PASSWORD, { delay: 25 });
 
-  // Find captcha question — usually a label/span near a captcha input
+  // Find captcha question (e.g. "What is 6 + 5 = ? :" with input next to it)
   const { captchaText, captchaSel } = await page.evaluate(() => {
-    // Find an input that looks like the captcha answer field (small, numeric, near the word "captcha" or "= ?")
-    const inputs = Array.from(document.querySelectorAll('input'));
-    for (const inp of inputs) {
-      if (inp.type === 'hidden' || inp.type === 'password') continue;
-      if (inp.name === 'username' || inp.name === 'user' || inp.name === 'email') continue;
-      // Look at surrounding text for a math expression
-      const parent = inp.closest('div,form,fieldset,td,tr,label') || inp.parentElement;
-      const text = (parent?.innerText || '') + ' ' + (inp.placeholder || '');
-      if (/[\d]\s*[+\-x×*/÷]\s*[\d]/.test(text) || /captcha/i.test(text)) {
-        return { captchaText: text, captchaSel: inp.name ? `input[name="${inp.name}"]` : null };
+    // 1) Find the math expression anywhere on the page
+    const allText = document.body.innerText || '';
+    const mathMatch = allText.match(/(?:what\s+is\s+)?(-?\d+)\s*([+\-x×*/÷])\s*(-?\d+)\s*=\s*\?/i);
+    if (!mathMatch) return { captchaText: null, captchaSel: null };
+    const expr = mathMatch[0];
+
+    // 2) Locate the DOM node containing that text
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node, host = null;
+    while ((node = walker.nextNode())) {
+      if (/(-?\d+)\s*[+\-x×*/÷]\s*(-?\d+)\s*=\s*\?/i.test(node.nodeValue || '')) {
+        host = node.parentElement; break;
       }
     }
-    return { captchaText: null, captchaSel: null };
+
+    // 3) Find the nearest answer input — search ancestors → look inside their inputs
+    let answerInput = null;
+    let cur = host;
+    for (let depth = 0; depth < 6 && cur && !answerInput; depth++) {
+      const candidates = cur.querySelectorAll('input[type="text"], input[type="number"], input:not([type])');
+      for (const inp of candidates) {
+        if (inp.type === 'hidden' || inp.type === 'password') continue;
+        const nm = (inp.name || '').toLowerCase();
+        if (nm === 'username' || nm === 'user' || nm === 'email' || nm === 'password') continue;
+        answerInput = inp; break;
+      }
+      cur = cur.parentElement;
+    }
+
+    // 4) Fallback: any visible non-auth input that comes AFTER the captcha label in DOM order
+    if (!answerInput) {
+      const allInputs = Array.from(document.querySelectorAll('input'));
+      for (const inp of allInputs) {
+        if (inp.type === 'hidden' || inp.type === 'password') continue;
+        const nm = (inp.name || '').toLowerCase();
+        if (nm === 'username' || nm === 'user' || nm === 'email') continue;
+        // Pick the LAST text/number input on the form (captcha is usually last)
+        answerInput = inp;
+      }
+    }
+
+    if (!answerInput) return { captchaText: expr, captchaSel: null };
+    // Build a unique selector
+    let sel = null;
+    if (answerInput.id) sel = `#${CSS.escape(answerInput.id)}`;
+    else if (answerInput.name) sel = `input[name="${answerInput.name}"]`;
+    else {
+      // last-input fallback
+      const all = Array.from(document.querySelectorAll('input'));
+      sel = `input:nth-of-type(${all.indexOf(answerInput) + 1})`;
+    }
+    return { captchaText: expr, captchaSel: sel };
   });
 
   if (captchaText && captchaSel) {
