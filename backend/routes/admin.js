@@ -279,6 +279,8 @@ router.post('/ims-sync-live', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// GET /api/admin/ims-pool-breakdown — pool size grouped by range (operator)
 router.get('/ims-pool-breakdown', (req, res) => {
   const ranges = db.prepare(`
     SELECT
