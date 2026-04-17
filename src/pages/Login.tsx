@@ -190,23 +190,6 @@ const Login = () => {
             </Link>
           </motion.div>
 
-          {/* Demo credentials hint */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-            className="mt-5 p-3 rounded-lg bg-neon-cyan/[0.05] border border-neon-cyan/20"
-          >
-            <p className="text-[10px] uppercase tracking-wider text-neon-cyan font-semibold mb-1.5">Demo Agent Credentials</p>
-            <div className="space-y-0.5 font-mono text-xs text-muted-foreground">
-              <p>Username: <span className="text-foreground">demo_agent</span></p>
-              <p>Password: <span className="text-foreground">demo123</span></p>
-            </div>
-            <p className="text-[10px] text-muted-foreground/60 mt-2">
-              💡 Backend না থাকলেও demo mode-এ full UI preview হবে
-            </p>
-          </motion.div>
-
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

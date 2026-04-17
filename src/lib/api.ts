@@ -101,13 +101,11 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
     if (!res.ok) throw new Error((data as any).error || `Request failed: ${res.status}`);
     return data as T;
   } catch (err: any) {
-    // Network failure → try demo fallback automatically
-    if (/Failed to fetch|NetworkError|TypeError/.test(err?.message || "")) {
+    // Production: never fall back to demo data — surface the real error.
+    // Demo mode only activates if explicitly enabled via demoMode.enable() in dev.
+    if (demoMode.enabled() && /Failed to fetch|NetworkError|TypeError/.test(err?.message || "")) {
       const demo = demoRoute(path, opts);
-      if (demo !== undefined) {
-        demoMode.enable();
-        return demo as T;
-      }
+      if (demo !== undefined) return demo as T;
     }
     throw err;
   }
