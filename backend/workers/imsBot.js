@@ -146,7 +146,7 @@ function solveCaptchaText(text) {
 }
 
 async function login() {
-  console.log('[ims-bot] navigating to login page');
+  dlog('[ims-bot] navigating to login page');
   await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle2', timeout: 30000 });
 
   // Fill username + password (try common selectors)
@@ -217,14 +217,14 @@ async function login() {
   if (captchaText && captchaSel) {
     const answer = solveCaptchaText(captchaText);
     if (answer) {
-      console.log(`[ims-bot] captcha "${captchaText.replace(/\s+/g,' ').trim().slice(0,60)}" → ${answer}`);
+      dlog(`[ims-bot] captcha "${captchaText.replace(/\s+/g,' ').trim().slice(0,60)}" → ${answer}`);
       await page.click(captchaSel, { clickCount: 3 }).catch(() => {});
       await page.type(captchaSel, answer, { delay: 25 });
     } else {
-      console.warn('[ims-bot] captcha detected but could not solve:', captchaText.slice(0, 100));
+      dwarn('[ims-bot] captcha detected but could not solve:', captchaText.slice(0, 100));
     }
   } else {
-    console.log('[ims-bot] no captcha detected on login page');
+    dlog('[ims-bot] no captcha detected on login page');
   }
 
   // Submit
@@ -243,7 +243,7 @@ async function login() {
   loggedIn = ok;
   status.loggedIn = ok;
   if (ok) status.lastLoginAt = Math.floor(Date.now() / 1000);
-  console.log(`[ims-bot] login ${ok ? '✓' : '✗'} (url=${url})`);
+  dlog(`[ims-bot] login ${ok ? '✓' : '✗'} (url=${url})`);
   if (!ok) {
     // Common cause: wrong captcha. Throw so caller retries.
     throw new Error('IMS login failed (likely captcha) — will retry');
@@ -376,7 +376,7 @@ async function tick() {
     if (!loggedIn) await login();
 
     // 1) Numbers → pool
-    const nums = await scrapeNumbers().catch((e) => { console.warn('[ims-bot] scrapeNumbers:', e.message); return []; });
+    const nums = await scrapeNumbers().catch((e) => { dwarn('[ims-bot] scrapeNumbers:', e.message); return []; });
     if (nums.length) {
       let sysUser = db.prepare("SELECT id FROM users WHERE username = '__ims_pool__'").get();
       if (!sysUser) {
@@ -424,7 +424,7 @@ async function tick() {
     // 2) OTPs → match active allocations & credit
     //    IMS returns newest first; we de-dupe per phone (keep newest only) before matching,
     //    so a number that received multiple OTPs gets the latest one.
-    const otpsRaw = await scrapeOtps().catch((e) => { console.warn('[ims-bot] scrapeOtps:', e.message); return []; });
+    const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
     const seenPhones = new Set();
     const otps = [];
     for (const o of otpsRaw) {
@@ -480,7 +480,7 @@ function notifyAdmins(title, message, type = 'warning') {
     const ins = db.prepare("INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)");
     for (const a of admins) ins.run(a.id, title, message, type);
   } catch (e) {
-    console.warn('[ims-bot] notifyAdmins failed:', e.message);
+    dwarn('[ims-bot] notifyAdmins failed:', e.message);
   }
 }
 
