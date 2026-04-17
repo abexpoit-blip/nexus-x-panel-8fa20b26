@@ -32,6 +32,9 @@ let page = null;
 let busy = false;
 let consecFail = 0;
 let loggedIn = false;
+let emptyStreak = 0;        // consecutive scrapes returning 0 numbers
+let scrapeTimer = null;     // for graceful stop
+const EMPTY_LIMIT = +(process.env.IMS_EMPTY_LIMIT || 10);
 
 // Live status (read by /api/admin/ims-status)
 const status = {
@@ -280,6 +283,22 @@ async function tick() {
       if (added) {
         console.log(`[ims-bot] pool: +${added} new numbers (total scraped ${nums.length})`);
         logEvent('success', `Pool +${added} new numbers`, { scraped: nums.length });
+      }
+
+      // Auto-pause: track consecutive empty scrapes
+      if (nums.length === 0) {
+        emptyStreak++;
+        if (emptyStreak >= EMPTY_LIMIT) {
+          const msg = `IMS bot auto-paused: ${EMPTY_LIMIT} consecutive empty scrapes`;
+          console.warn(`[ims-bot] ${msg}`);
+          logEvent('warn', msg);
+          notifyAdmins('IMS Bot Auto-Paused', `No numbers found in last ${EMPTY_LIMIT} scrapes. Bot stopped to save resources. Click Start when IMS has stock.`, 'warning');
+          await stop();
+          emptyStreak = 0;
+          return;
+        }
+      } else {
+        emptyStreak = 0;
       }
     }
 
