@@ -242,6 +242,7 @@ export const api = {
   releaseNumber: (id: number) => request(`/numbers/release/${id}`, { method: "POST" }),
   numberSummary: () => request<{ today: { c: number; s: number }; week: { c: number; s: number }; month: { c: number; s: number }; active: number }>("/numbers/summary"),
   syncOtp: () => request<{ updated: number }>("/otp/sync", { method: "POST" }),
+  pricing: () => request<{ pricing: { id: number; name: string; code: string; flag: string; price_bdt: number; operator_count: number }[] }>("/numbers/pricing"),
 
   // Rates
   rates: {
