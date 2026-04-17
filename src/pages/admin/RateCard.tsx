@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { GradientMesh, PageHeader } from "@/components/premium";
 
-const empty: Partial<Rate> = { provider: "msi", country_code: "", country_name: "", operator: "", price_bdt: 0, active: 1 };
+const empty: Partial<Rate> & { agent_commission_percent?: number } = { provider: "msi", country_code: "", country_name: "", operator: "", price_bdt: 0, active: 1, agent_commission_percent: 60 };
 
 const AdminRateCard = () => {
   const qc = useQueryClient();
@@ -99,7 +99,17 @@ const AdminRateCard = () => {
               <Field label="Country name"><Input value={form.country_name || ""} onChange={(e) => setForm({ ...form, country_name: e.target.value })} /></Field>
             </div>
             <Field label="Operator"><Input value={form.operator || ""} onChange={(e) => setForm({ ...form, operator: e.target.value })} /></Field>
-            <Field label="Price (৳)"><Input type="number" step="0.01" value={form.price_bdt ?? 0} onChange={(e) => setForm({ ...form, price_bdt: +e.target.value })} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Provider Price (৳)"><Input type="number" step="0.01" value={form.price_bdt ?? 0} onChange={(e) => setForm({ ...form, price_bdt: +e.target.value })} /></Field>
+              <Field label="Agent Commission (%)">
+                <Input type="number" min="0" max="100" step="1"
+                  value={(form as any).agent_commission_percent ?? 60}
+                  onChange={(e) => setForm({ ...form, agent_commission_percent: +e.target.value } as any)} />
+              </Field>
+            </div>
+            <div className="text-xs text-muted-foreground -mt-1 pl-1">
+              Agent earns: <span className="text-neon-green font-mono">৳{(((form.price_bdt ?? 0) * ((form as any).agent_commission_percent ?? 60)) / 100).toFixed(2)}</span> per successful OTP
+            </div>
             <Field label="Active">
               <select value={String(form.active ?? 1)} onChange={(e) => setForm({ ...form, active: +e.target.value })} className="w-full h-10 px-3 rounded-md bg-white/[0.04] border border-white/[0.08]">
                 <option value="1">Active</option>
@@ -117,6 +127,7 @@ const AdminRateCard = () => {
                   country_name: form.country_name || null,
                   operator: form.operator || null,
                   price_bdt: Number(form.price_bdt) || 0,
+                  agent_commission_percent: Number((form as any).agent_commission_percent) || 0,
                   active: !!form.active,
                 };
                 if (form.id) payload.id = form.id;
