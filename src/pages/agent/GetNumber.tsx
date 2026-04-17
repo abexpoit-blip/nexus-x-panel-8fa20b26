@@ -29,9 +29,16 @@ interface Operator {
   price_bdt?: number;
 }
 
+// Agents see "Server A" / "Server B" — real provider names (acchub/ims) are hidden.
+const SERVERS = [
+  { id: "acchub", label: "Server A" },
+  { id: "ims", label: "Server B" },
+] as const;
+type ServerId = typeof SERVERS[number]["id"];
+
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
-  const provider = "acchub"; // hidden from agents
+  const [provider, setProvider] = useState<ServerId>("acchub");
   const [countries, setCountries] = useState<Country[]>([]);
   const [countryId, setCountryId] = useState<number | "">("");
   const [operators, setOperators] = useState<Operator[]>([]);
@@ -61,14 +68,21 @@ const AgentGetNumber = () => {
 
   useEffect(() => {
     api.myNumbers().then(({ numbers }) => setNumbers(numbers as AllocatedNumber[])).catch(() => {});
-    api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => {});
   }, []);
+
+  // Reload countries whenever the agent switches Server A / B
+  useEffect(() => {
+    setCountryId("");
+    setOperatorId("");
+    setOperators([]);
+    api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => setCountries([]));
+  }, [provider]);
 
   useEffect(() => {
     if (!countryId) { setOperators([]); setOperatorId(""); return; }
     setOperatorId("");
     api.operators(provider, Number(countryId)).then(({ operators }) => setOperators(operators)).catch(() => {});
-  }, [countryId]);
+  }, [countryId, provider]);
 
   // Close country dropdown on outside click
   useEffect(() => {
