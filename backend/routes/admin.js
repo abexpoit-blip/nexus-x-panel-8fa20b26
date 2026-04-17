@@ -98,4 +98,14 @@ router.get('/allocations', (req, res) => {
   res.json({ allocations });
 });
 
+// GET /api/admin/ims-status — live IMS bot status
+router.get('/ims-status', (req, res) => {
+  try {
+    const { getStatus } = require('../workers/imsBot');
+    res.json({ status: getStatus() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
