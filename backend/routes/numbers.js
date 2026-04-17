@@ -217,23 +217,29 @@ async function markOtpReceived(allocation, otpCode) {
       otpCode, agent_amount
     );
 
-    // Credit agent
-    db.prepare(`UPDATE users SET balance = balance + ?, otp_count = otp_count + 1 WHERE id = ?`)
-      .run(agent_amount, allocation.user_id);
-
-    // Payment record
+    // Credit agent (only if rate card allows payout > 0)
     if (agent_amount > 0) {
+      db.prepare(`UPDATE users SET balance = balance + ?, otp_count = otp_count + 1 WHERE id = ?`)
+        .run(agent_amount, allocation.user_id);
+
+      // Payment record
       db.prepare(`
         INSERT INTO payments (user_id, amount_bdt, type, method, reference, note)
         VALUES (?, ?, 'credit', 'auto', ?, 'OTP commission')
       `).run(allocation.user_id, agent_amount, `otp:${allocation.id}`);
+    } else {
+      // Still bump otp_count for stats, but no balance change
+      db.prepare(`UPDATE users SET otp_count = otp_count + 1 WHERE id = ?`).run(allocation.user_id);
     }
 
-    // Notification
+    // Notification (different message when no payout)
+    const notifMsg = agent_amount > 0
+      ? `${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
+      : `${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
     db.prepare(`
       INSERT INTO notifications (user_id, title, message, type)
       VALUES (?, ?, ?, 'success')
-    `).run(allocation.user_id, 'OTP received', `${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`);
+    `).run(allocation.user_id, 'OTP received', notifMsg);
   });
   tx();
 }
