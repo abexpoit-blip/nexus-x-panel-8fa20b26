@@ -165,6 +165,23 @@ const AdminAgents = () => {
             render: (r) => (
               <div className="flex gap-2 flex-wrap">
                 <button
+                  onClick={async () => {
+                    if (!confirm(`Login as ${r.username}? Your admin session will be preserved — exit anytime from the top banner.`)) return;
+                    const ok = await loginAsAgent(r.id);
+                    if (ok) {
+                      toast.success(`Now viewing as ${r.username}`);
+                      navigate("/agent/dashboard");
+                    } else {
+                      toast.error("Login as agent failed");
+                    }
+                  }}
+                  className="text-neon-cyan hover:underline text-xs flex items-center gap-1"
+                  title="Login as this agent (impersonate)"
+                  disabled={r.status !== "active"}
+                >
+                  <LogIn className="w-3 h-3" /> Login as
+                </button>
+                <button
                   onClick={() => { setTopup({ id: r.id, username: r.username }); setTopupAmount(""); setTopupNote(""); }}
                   className="text-neon-green hover:underline text-xs flex items-center gap-1"
                   title="Top up balance"
