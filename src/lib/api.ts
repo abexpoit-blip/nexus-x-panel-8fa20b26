@@ -154,6 +154,32 @@ function demoRoute(path: string, opts: RequestInit): any {
       { id: "ims", name: "IMS SMS", configured: true, baseUrl: "https://www.imssms.org", username: "Sh****n7", loggedIn: true, balance: null, currency: "USD", lastError: null, otpHistoryCount: 0 },
     ],
   };
+  if (path === "/admin/system-health") {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      server: {
+        uptime_sec: 86400 + 3600 * 7,
+        node_version: "v20.11.1",
+        env: "production",
+        memory_mb: { rss: 142.3, heap_used: 68.7, heap_total: 95.4 },
+      },
+      database: {
+        size_bytes: 4_823_552,
+        size_mb: 4.6,
+        path: "./data/nexus.db",
+        last_backup: { name: "nexus-2025-04-17-0400.db.gz", size: 1_234_000, mtime: now - 3600 * 9 },
+        backup_dir: "/opt/nexus/backups",
+      },
+      ims_bot: {
+        enabled: true, running: true, logged_in: true,
+        pool_size: 4823, active_assigned: 12,
+        last_scrape_at: now - 22, last_scrape_ok: true,
+        interval_sec: 60, otp_interval_sec: 10, consec_fail: 0, last_error: null,
+      },
+      acchub_poller: { running: true, lastTickAt: now - 4 },
+      counts: { pending_withdrawals: 2, active_sessions: 5, ims_pool_size: 4823 },
+    };
+  }
 
   if (path === "/rates") return demoData.rates();
   if (path === "/cdr" || path === "/cdr/mine") return demoData.cdr();
