@@ -19,6 +19,18 @@ const db = new Database(DB_PATH);
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+// --- Idempotent column-add migrations for existing databases ---
+function addColIfMissing(table, col, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+    console.log(`✓ Migration: added ${table}.${col}`);
+  }
+}
+addColIfMissing('withdrawals', 'admin_note', 'TEXT');
+addColIfMissing('withdrawals', 'reviewed_by', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+addColIfMissing('withdrawals', 'reviewed_at', 'INTEGER');
+
 // Seed default admin (only if no admin exists)
 const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
 if (adminExists.c === 0) {
