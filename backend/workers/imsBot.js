@@ -33,6 +33,36 @@ let busy = false;
 let consecFail = 0;
 let loggedIn = false;
 
+// Live status (read by /api/admin/ims-status)
+const status = {
+  enabled: false,
+  running: false,
+  loggedIn: false,
+  lastLoginAt: null,        // unix seconds
+  lastScrapeAt: null,       // unix seconds
+  lastScrapeOk: false,
+  lastError: null,          // string
+  lastErrorAt: null,
+  totalScrapes: 0,
+  numbersScrapedTotal: 0,   // sum of numbers seen across scrapes
+  numbersAddedTotal: 0,     // newly inserted to pool
+  otpsDeliveredTotal: 0,    // OTPs successfully matched & credited
+  consecFail: 0,
+  baseUrl: '',
+  intervalSec: 0,
+};
+function getStatus() {
+  // Augment with live DB counts every read
+  try {
+    const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='pool'").get().c;
+    const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active'").get().c;
+    const otpReceived = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='received'").get().c;
+    return { ...status, poolSize, activeAssigned, otpReceived };
+  } catch (_) {
+    return { ...status, poolSize: 0, activeAssigned: 0, otpReceived: 0 };
+  }
+}
+
 async function ensureBrowser() {
   if (browser && page) return;
   const puppeteer = require('puppeteer');
@@ -130,6 +160,8 @@ async function login() {
   const url = page.url();
   const ok = !/\/login/i.test(url);
   loggedIn = ok;
+  status.loggedIn = ok;
+  if (ok) status.lastLoginAt = Math.floor(Date.now() / 1000);
   console.log(`[ims-bot] login ${ok ? '✓' : '✗'} (url=${url})`);
   if (!ok) {
     // Common cause: wrong captcha. Throw so caller retries.
