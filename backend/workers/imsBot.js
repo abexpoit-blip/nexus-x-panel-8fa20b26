@@ -19,6 +19,11 @@ const fs = require('fs');
 const db = require('../lib/db');
 const { markOtpReceived } = require('../routes/numbers');
 
+// Quiet logger — production only prints important events; dev prints all.
+const QUIET = process.env.NODE_ENV === 'production';
+const dlog = (...a) => { if (!QUIET) console.log(...a); };
+const dwarn = (...a) => { if (!QUIET) console.warn(...a); };
+
 // Read DB-stored override (settings table); falls back to .env
 function readSetting(key) {
   try { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null; }
