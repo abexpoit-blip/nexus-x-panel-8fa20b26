@@ -33,7 +33,9 @@ if (process.env.NODE_ENV === 'production' && !corsOrigins) {
 }
 
 app.use(cors({
-  origin: corsOrigins || true,
+  // When credentials:true the browser requires an explicit origin (no '*'),
+  // so in dev we reflect the request origin instead of using `true`.
+  origin: corsOrigins || ((origin, cb) => cb(null, origin || true)),
   credentials: true,
 }));
 
