@@ -1,6 +1,9 @@
 // API client for nexus-backend
+import { DEMO_USERS, demoData } from "./demoData";
+
 const BASE = (import.meta.env.VITE_API_URL as string) || "https://api.nexus-x.site/api";
 const TOKEN_KEY = "nexus_token";
+const DEMO_KEY = "nexus_demo_mode";
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY),
@@ -8,19 +11,88 @@ export const tokenStore = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 };
 
+export const demoMode = {
+  enabled: () => localStorage.getItem(DEMO_KEY) === "true",
+  enable: () => localStorage.setItem(DEMO_KEY, "true"),
+  disable: () => localStorage.removeItem(DEMO_KEY),
+};
+
 async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = tokenStore.get();
-  const res = await fetch(`${BASE}${path}`, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opts.headers || {}),
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as any).error || `Request failed: ${res.status}`);
-  return data as T;
+  // If demo mode is on OR the token looks like a demo token, short-circuit to demo handler
+  if (demoMode.enabled() || (token && token.startsWith("demo_"))) {
+    const demo = demoRoute(path, opts);
+    if (demo !== undefined) return demo as T;
+  }
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(opts.headers || {}),
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any).error || `Request failed: ${res.status}`);
+    return data as T;
+  } catch (err: any) {
+    // Network failure → try demo fallback automatically
+    if (/Failed to fetch|NetworkError|TypeError/.test(err?.message || "")) {
+      const demo = demoRoute(path, opts);
+      if (demo !== undefined) {
+        demoMode.enable();
+        return demo as T;
+      }
+    }
+    throw err;
+  }
+}
+
+/** Map an API path to a demo response. Returns undefined if no demo handler. */
+function demoRoute(path: string, opts: RequestInit): any {
+  const method = (opts.method || "GET").toUpperCase();
+  const body = opts.body ? JSON.parse(opts.body as string) : {};
+
+  if (path === "/auth/login" && method === "POST") {
+    const { username, password } = body;
+    const u = (DEMO_USERS as any)[username];
+    if (!u || u.password !== password) throw new Error("Invalid credentials (demo mode)");
+    return { token: `demo_${username}_${Date.now()}`, user: u.user };
+  }
+  if (path === "/auth/me") {
+    const t = tokenStore.get() || "";
+    const m = t.match(/^demo_(\w+)_/);
+    if (m) {
+      const u = (DEMO_USERS as any)[m[1]];
+      if (u) return { user: u.user };
+    }
+    return undefined;
+  }
+
+  if (path === "/admin/stats") return demoData.adminStats();
+  if (path === "/admin/leaderboard") return demoData.leaderboard();
+  if (path === "/admin/allocations") return demoData.allocations();
+  if (path === "/admin/agents") return demoData.agents();
+
+  if (path === "/rates") return demoData.rates();
+  if (path === "/cdr" || path === "/cdr/mine") return demoData.cdr();
+  if (path === "/payments" || path === "/payments/mine") return demoData.payments();
+  if (path === "/withdrawals" || path === "/withdrawals/pending" || path === "/withdrawals/mine") return demoData.withdrawals();
+
+  if (path === "/numbers/providers") return demoData.providers();
+  if (path === "/numbers/my") return demoData.myNumbers();
+  if (path === "/numbers/summary") return demoData.numberSummary();
+
+  if (path === "/notifications") return demoData.notifications();
+  if (path.startsWith("/audit")) return demoData.audit();
+  if (path === "/sessions/mine" || path === "/sessions") return demoData.sessions();
+
+  if (path === "/settings/public") return demoData.settings();
+  if (path === "/settings") return demoData.settingsAll();
+
+  if (method !== "GET") return { ok: true, id: Date.now() };
+  return undefined;
 }
 
 export type Agent = {
