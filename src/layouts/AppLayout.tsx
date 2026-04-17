@@ -50,6 +50,18 @@ export const AppLayout = ({ requiredRole }: AppLayoutProps) => {
           </div>
 
           <div className="flex items-center gap-3">
+            {maintenanceMode && (
+              <div
+                title={maintenanceMessage}
+                className={cn(
+                  "hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold",
+                  "bg-neon-amber/15 text-neon-amber border border-neon-amber/30 animate-pulse"
+                )}
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                <span className="uppercase tracking-wider">Maintenance</span>
+              </div>
+            )}
             {user?.role === "agent" && (
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 glass rounded-lg text-sm">
                 <Wallet className="w-4 h-4 text-neon-green" />
@@ -60,6 +72,14 @@ export const AppLayout = ({ requiredRole }: AppLayoutProps) => {
             <NotificationBell />
           </div>
         </header>
+
+        {/* Mobile maintenance bar */}
+        {maintenanceMode && (
+          <div className="sm:hidden flex items-center gap-2 px-4 py-2 bg-neon-amber/15 text-neon-amber border-b border-neon-amber/30 text-xs font-semibold">
+            <Wrench className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Maintenance mode active</span>
+          </div>
+        )}
 
         {/* Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
