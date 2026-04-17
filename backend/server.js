@@ -58,6 +58,9 @@ app.listen(PORT, () => {
   console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   CORS origin: ${process.env.CORS_ORIGIN || '(allow all)'}\n`);
 
-  // Start OTP poller after server is up
+  // Start OTP poller (AccHub auto polling) after server is up
   require('./workers/otpPoller').start();
+
+  // Start IMS browser bot (no-op if IMS_ENABLED=false)
+  require('./workers/imsBot').start();
 });
