@@ -108,4 +108,16 @@ router.get('/ims-status', (req, res) => {
   }
 });
 
+// POST /api/admin/ims-restart — recycle the headless browser session
+router.post('/ims-restart', async (req, res) => {
+  try {
+    const { restart } = require('../workers/imsBot');
+    await restart();
+    logFromReq(req, 'ims_bot_restart');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

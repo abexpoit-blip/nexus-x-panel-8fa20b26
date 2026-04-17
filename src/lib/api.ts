@@ -246,5 +246,6 @@ export const api = {
     leaderboard: () => request<{ leaderboard: { id: number; username: string; otp_count: number }[] }>("/admin/leaderboard"),
     allocations: () => request<{ allocations: Allocation[] }>("/admin/allocations"),
     imsStatus: () => request<{ status: any }>("/admin/ims-status"),
+    imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),
   },
 };
