@@ -200,8 +200,15 @@ export const demoData = {
     return { allocated: [demoAllocations.allocate(c?.code || "880", opName)], errors: [] as string[] };
   },
   syncOtp: () => ({ updated: demoAllocations.tickOtp() }),
-  settings: () => ({ signup_enabled: true }),
-  settingsAll: () => ({ settings: { signup_enabled: "true" } }),
+  settings: () => {
+    const m = typeof localStorage !== "undefined" && localStorage.getItem("nexus_maintenance_mode") === "true";
+    const msg = (typeof localStorage !== "undefined" && localStorage.getItem("nexus_maintenance_message")) || "System is under maintenance. Please try again later.";
+    return { signup_enabled: true, maintenance_mode: m, maintenance_message: msg };
+  },
+  settingsAll: () => ({ settings: {
+    signup_enabled: "true",
+    maintenance_mode: String(typeof localStorage !== "undefined" && localStorage.getItem("nexus_maintenance_mode") === "true"),
+  } }),
 };
 
 // In-memory allocations for demo mode — OTP auto-fills 4-8s after allocation

@@ -22,6 +22,9 @@ export interface AuthContextType {
   logout: () => void;
   signupEnabled: boolean;
   setSignupEnabled: (enabled: boolean) => void;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  setMaintenanceMode: (enabled: boolean, message?: string) => void;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);

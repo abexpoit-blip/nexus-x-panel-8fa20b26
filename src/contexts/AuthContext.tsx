@@ -28,6 +28,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [signupEnabled, setSignupEnabledState] = useState(() => {
     return localStorage.getItem("nexus_signup_enabled") !== "false";
   });
+  const [maintenanceMode, setMaintenanceModeState] = useState(() => {
+    return localStorage.getItem("nexus_maintenance_mode") === "true";
+  });
+  const [maintenanceMessage, setMaintenanceMessageState] = useState(() => {
+    return localStorage.getItem("nexus_maintenance_message") || "System is under maintenance. Please try again later.";
+  });
+
+  // Sync from server on mount (works for live backend; falls back to local for demo)
+  useEffect(() => {
+    api.settings.getPublic().then((s: any) => {
+      if (typeof s.maintenance_mode === "boolean") {
+        setMaintenanceModeState(s.maintenance_mode);
+        localStorage.setItem("nexus_maintenance_mode", String(s.maintenance_mode));
+      }
+      if (s.maintenance_message) {
+        setMaintenanceMessageState(s.maintenance_message);
+        localStorage.setItem("nexus_maintenance_message", s.maintenance_message);
+      }
+    }).catch(() => {});
+  }, []);
 
   const login = useCallback(async (username: string, password: string): Promise<boolean> => {
     try {
@@ -50,10 +70,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setSignupEnabled = useCallback((enabled: boolean) => {
     setSignupEnabledState(enabled);
     localStorage.setItem("nexus_signup_enabled", String(enabled));
+    api.settings.set("signup_enabled", String(enabled)).catch(() => {});
+  }, []);
+
+  const setMaintenanceMode = useCallback((enabled: boolean, message?: string) => {
+    setMaintenanceModeState(enabled);
+    localStorage.setItem("nexus_maintenance_mode", String(enabled));
+    api.settings.set("maintenance_mode", String(enabled)).catch(() => {});
+    if (message !== undefined) {
+      setMaintenanceMessageState(message);
+      localStorage.setItem("nexus_maintenance_message", message);
+      api.settings.set("maintenance_message", message).catch(() => {});
+    }
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout, signupEnabled, setSignupEnabled }}>
+    <AuthContext.Provider value={{
+      user, isAuthenticated: !!user, login, logout,
+      signupEnabled, setSignupEnabled,
+      maintenanceMode, maintenanceMessage, setMaintenanceMode,
+    }}>
       {children}
     </AuthContext.Provider>
   );
