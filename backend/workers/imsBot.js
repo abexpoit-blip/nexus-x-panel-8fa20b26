@@ -441,13 +441,51 @@ async function stop() {
   status.loggedIn = false;
 }
 
-// CLI: `node workers/imsBot.js --inspect`  → opens visible browser & dumps HTML on Ctrl+C
-if (require.main === module && process.argv.includes('--inspect')) {
+// CLI helpers (run with: node workers/imsBot.js --inspect | --dump-numbers)
+if (require.main === module && (process.argv.includes('--inspect') || process.argv.includes('--dump-numbers'))) {
   require('dotenv').config();
+  const dumpMode = process.argv.includes('--dump-numbers');
   (async () => {
-    process.env.IMS_HEADLESS = 'false';
+    process.env.IMS_HEADLESS = dumpMode ? 'true' : 'false';
     await ensureBrowser();
-    await login().catch((e) => console.warn('login failed:', e.message));
+    try {
+      await login();
+      console.log('[dump] login OK, url=', page.url());
+    } catch (e) {
+      console.warn('login failed:', e.message);
+    }
+
+    if (dumpMode) {
+      // Try common IMS paths and dump whichever loads
+      const paths = ['/client/SMSNumbers', '/client/Numbers', '/client/MyNumbers', '/client/SMSNumberList', '/client/SMSCDRStats'];
+      for (const p of paths) {
+        try {
+          const url = `${BASE_URL}${p}`;
+          await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
+          const finalUrl = page.url();
+          const html = await page.content();
+          const fname = `ims-dump${p.replace(/\//g, '_')}.html`;
+          fs.writeFileSync(fname, html);
+          console.log(`[dump] ${p} → ${finalUrl} (${html.length} bytes) → ${fname}`);
+          // Also extract a quick summary: tables/rows/links/menu items
+          const summary = await page.evaluate(() => {
+            const tables = document.querySelectorAll('table').length;
+            const rows = document.querySelectorAll('table tbody tr').length;
+            const links = Array.from(document.querySelectorAll('a[href]'))
+              .map(a => `${a.innerText.trim().slice(0,40)} → ${a.getAttribute('href')}`)
+              .filter(t => t.length > 5).slice(0, 40);
+            return { tables, rows, links };
+          });
+          console.log(`   tables=${summary.tables} rows=${summary.rows}`);
+          console.log(`   links sample:\n     ${summary.links.join('\n     ')}`);
+        } catch (e) {
+          console.warn(`[dump] ${p} failed:`, e.message);
+        }
+      }
+      await stop();
+      process.exit(0);
+    }
+
     console.log('Inspector ready. URL:', page.url(), '— navigate around, Ctrl+C to dump.');
     process.on('SIGINT', async () => {
       try {
