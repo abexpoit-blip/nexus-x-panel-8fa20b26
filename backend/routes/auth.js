@@ -6,14 +6,22 @@ const { log, logFromReq } = require('../lib/audit');
 
 const router = express.Router();
 
+// Username: 3-32 chars, alphanumeric + underscore
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,32}$/;
+
 // POST /api/auth/login
 router.post('/login', (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  if (username.length > 64 || password.length > 200) {
+    return res.status(400).json({ error: 'Invalid credentials' });
+  }
 
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!user) {
-    log({ action: 'login_failed', ip: req.ip, meta: { username } });
+    log({ action: 'login_failed', ip: req.ip, meta: { username: username.slice(0, 32) } });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   if (!bcrypt.compareSync(password, user.password_hash)) {
@@ -36,8 +44,18 @@ router.post('/register', (req, res) => {
   if (setting?.value !== 'true') return res.status(403).json({ error: 'Registration disabled' });
 
   const { username, password, full_name, phone, telegram } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({ error: 'Username: 3-32 chars, alphanumeric + underscore only' });
+  }
+  if (password.length < 8 || password.length > 200) {
+    return res.status(400).json({ error: 'Password must be 8-200 characters' });
+  }
+  if (full_name && (typeof full_name !== 'string' || full_name.length > 120)) {
+    return res.status(400).json({ error: 'Invalid full_name' });
+  }
 
   const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (exists) return res.status(409).json({ error: 'Username already taken' });
