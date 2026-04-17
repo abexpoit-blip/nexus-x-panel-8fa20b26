@@ -255,6 +255,8 @@ async function tick() {
         }
       });
       tx(nums);
+      status.numbersScrapedTotal += nums.length;
+      status.numbersAddedTotal += added;
       if (added) console.log(`[ims-bot] pool: +${added} new numbers (total scraped ${nums.length})`);
     }
 
@@ -268,19 +270,28 @@ async function tick() {
       `).get(o.phone_number);
       if (a) {
         await markOtpReceived(a, o.otp_code);
+        status.otpsDeliveredTotal++;
         console.log(`[ims-bot] OTP delivered: ${o.phone_number} → ${o.otp_code} (alloc#${a.id})`);
       }
     }
 
     consecFail = 0;
+    status.consecFail = 0;
+    status.lastScrapeAt = Math.floor(Date.now() / 1000);
+    status.lastScrapeOk = true;
+    status.totalScrapes++;
   } catch (e) {
     consecFail++;
+    status.consecFail = consecFail;
+    status.lastError = e.message;
+    status.lastErrorAt = Math.floor(Date.now() / 1000);
+    status.lastScrapeOk = false;
     console.error('[ims-bot] tick failed:', e.message);
-    // After 3 failures, recycle the browser (likely session expired or page crashed)
     if (consecFail >= 3) {
       console.warn('[ims-bot] recycling browser after repeated failures');
       try { await browser?.close(); } catch (_) {}
       browser = null; page = null; loggedIn = false;
+      status.loggedIn = false;
       consecFail = 0;
     }
   } finally {
@@ -289,14 +300,19 @@ async function tick() {
 }
 
 function start() {
+  status.enabled = ENABLED;
+  status.baseUrl = BASE_URL;
+  status.intervalSec = INTERVAL;
   if (!ENABLED) {
     console.log('✗ IMS bot disabled (set IMS_ENABLED=true to enable)');
     return;
   }
   if (!USERNAME || !PASSWORD) {
     console.warn('✗ IMS bot: IMS_USERNAME / IMS_PASSWORD not set');
+    status.lastError = 'IMS_USERNAME / IMS_PASSWORD not set';
     return;
   }
+  status.running = true;
   console.log(`✓ IMS bot starting (every ${INTERVAL}s, headless=${HEADLESS}, base=${BASE_URL})`);
   setTimeout(tick, 5000);
   setInterval(tick, INTERVAL * 1000);
@@ -305,6 +321,8 @@ function start() {
 async function stop() {
   try { await browser?.close(); } catch (_) {}
   browser = null; page = null; loggedIn = false;
+  status.running = false;
+  status.loggedIn = false;
 }
 
 // CLI: `node workers/imsBot.js --inspect`  → opens visible browser & dumps HTML on Ctrl+C
@@ -327,4 +345,4 @@ if (require.main === module && process.argv.includes('--inspect')) {
   })();
 }
 
-module.exports = { start, stop, tick, solveCaptchaText };
+module.exports = { start, stop, tick, solveCaptchaText, getStatus };
