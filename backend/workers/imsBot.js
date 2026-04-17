@@ -246,27 +246,74 @@ async function login() {
 }
 
 // ---- Scrape SMS Numbers page (the manager's available numbers) ----
+// Walks ALL pagination pages so 5K+ numbers come into the pool in one tick.
 async function scrapeNumbers() {
-  await page.goto(`${BASE_URL}/client/MySMSNumbers`, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => null);
-  // If session died, will redirect to /login → re-login next tick
+  await page.goto(`${BASE_URL}/client/MySMSNumbers`, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null);
   if (/\/login/i.test(page.url())) { loggedIn = false; return []; }
-  return await page.evaluate(() => {
+
+  // Try to switch the table page-size to "All" / max value if available
+  await page.evaluate(() => {
+    const sel = document.querySelector('select[name$="_length"], select.form-control-sm, select[aria-controls]');
+    if (!sel) return;
+    const opts = Array.from(sel.options).map(o => ({ v: o.value, t: o.text.trim().toLowerCase() }));
+    const all = opts.find(o => o.t === 'all' || o.v === '-1');
+    if (all) { sel.value = all.v; sel.dispatchEvent(new Event('change', { bubbles: true })); return; }
+    const maxNum = opts.filter(o => /^\d+$/.test(o.v)).map(o => +o.v).sort((a, b) => b - a)[0];
+    if (maxNum) { sel.value = String(maxNum); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+  }).catch(() => {});
+  await new Promise(r => setTimeout(r, 800));
+
+  const extractRows = () => page.evaluate(() => {
     const out = [];
     document.querySelectorAll('table tbody tr').forEach((row) => {
       const cells = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
       if (!cells.length) return;
-      // A row may contain: range, number, status, etc. Find the cell that is a phone number.
       const phone = cells.find(t => /^\+?\d{8,15}$/.test(t.replace(/[\s-]/g, '')));
       if (!phone) return;
-      // Range/operator usually a non-numeric text cell (e.g. "Peru Bitel TF04")
       const range = cells.find(t => /[A-Za-z]/.test(t) && t.length < 60 && t !== phone);
-      out.push({
-        phone_number: phone.replace(/[\s-]/g, ''),
-        operator: range || null,
-      });
+      out.push({ phone_number: phone.replace(/[\s-]/g, ''), operator: range || null });
     });
     return out;
   });
+
+  const seen = new Set();
+  const all = [];
+  const pushUnique = (rows) => {
+    for (const r of rows) {
+      if (seen.has(r.phone_number)) continue;
+      seen.add(r.phone_number);
+      all.push(r);
+    }
+  };
+  pushUnique(await extractRows());
+
+  // Paginate: click "Next" until disabled, no growth, or 200-page safety cap
+  for (let i = 0; i < 200; i++) {
+    const clicked = await page.evaluate(() => {
+      const isDisabled = (el) => {
+        if (!el) return true;
+        const cls = (el.className || '') + ' ' + ((el.parentElement && el.parentElement.className) || '');
+        if (/disabled/i.test(cls)) return true;
+        if (el.getAttribute('aria-disabled') === 'true') return true;
+        return false;
+      };
+      let next = document.querySelector('a.paginate_button.next, li.next > a, a[rel="next"]');
+      if (!next) {
+        next = Array.from(document.querySelectorAll('a, button'))
+          .find(a => /^(next|›|»)$/i.test((a.innerText || '').trim()));
+      }
+      if (!next || isDisabled(next)) return false;
+      next.click();
+      return true;
+    });
+    if (!clicked) break;
+    await new Promise(r => setTimeout(r, 700));
+    const before = all.length;
+    pushUnique(await extractRows());
+    if (all.length === before) break;
+  }
+
+  return all;
 }
 
 // ---- Scrape SMS CDRs (the OTP/SMS log) ----
