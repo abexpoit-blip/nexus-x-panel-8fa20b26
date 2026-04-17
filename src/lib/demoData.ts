@@ -136,7 +136,7 @@ export const demoData = {
     today: { c: 23, s: 18 }, week: { c: 142, s: 118 },
     month: { c: 587, s: 487 }, active: 7,
   }),
-  myNumbers: () => ({ numbers: demoData.allocations().allocations }),
+  myNumbers: () => ({ numbers: demoAllocations.list() }),
   myCdr: () => demoData.cdr(),
   myPayments: () => demoData.payments(),
   myWithdrawals: () => demoData.withdrawals(),
@@ -145,12 +145,14 @@ export const demoData = {
   }),
   countries: () => ({
     countries: [
-      { id: 1, name: "Bangladesh", code: "BD" },
-      { id: 2, name: "India", code: "IN" },
-      { id: 3, name: "Pakistan", code: "PK" },
-      { id: 4, name: "Indonesia", code: "ID" },
-      { id: 5, name: "Philippines", code: "PH" },
-      { id: 6, name: "Vietnam", code: "VN" },
+      { id: 1, name: "Bangladesh (+880)", code: "880" },
+      { id: 2, name: "India (+91)", code: "91" },
+      { id: 3, name: "Pakistan (+92)", code: "92" },
+      { id: 4, name: "Indonesia (+62)", code: "62" },
+      { id: 5, name: "Philippines (+63)", code: "63" },
+      { id: 6, name: "Vietnam (+84)", code: "84" },
+      { id: 7, name: "Nigeria (+234)", code: "234" },
+      { id: 8, name: "Kenya (+254)", code: "254" },
     ],
   }),
   operators: () => ({
@@ -162,16 +164,43 @@ export const demoData = {
       { id: 5, name: "Any" },
     ],
   }),
-  getNumber: () => ({
-    allocated: [{
-      id: Date.now(),
-      phone_number: `+88017${rand(10000000, 99999999)}`,
-      operator: pick(["Grameen", "Robi", "Banglalink"]),
-      otp: null,
-      status: "active",
-    }],
-    errors: [] as string[],
-  }),
+  getNumber: () => ({ allocated: [demoAllocations.allocate()], errors: [] as string[] }),
+  syncOtp: () => ({ updated: demoAllocations.tickOtp() }),
   settings: () => ({ signup_enabled: true }),
   settingsAll: () => ({ settings: { signup_enabled: "true" } }),
 };
+
+// In-memory allocations for demo mode — OTP auto-fills 4-8s after allocation
+const demoAllocations = (() => {
+  type Item = { id: number; phone_number: string; operator: string; otp: string | null; status: string; created_at: number; otp_at: number };
+  const items: Item[] = [];
+  return {
+    list: () => items.slice(),
+    allocate: (): Item => {
+      const n: Item = {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        phone_number: `+88017${rand(10000000, 99999999)}`,
+        operator: pick(["Grameenphone", "Robi", "Banglalink", "Airtel"]),
+        otp: null,
+        status: "active",
+        created_at: Math.floor(Date.now() / 1000),
+        otp_at: Math.floor(Date.now() / 1000) + rand(4, 8),
+      };
+      items.unshift(n);
+      if (items.length > 50) items.length = 50;
+      return n;
+    },
+    tickOtp: () => {
+      const now = Math.floor(Date.now() / 1000);
+      let updated = 0;
+      for (const n of items) {
+        if (!n.otp && n.otp_at && now >= n.otp_at) {
+          n.otp = String(rand(100000, 999999));
+          n.status = "received";
+          updated++;
+        }
+      }
+      return updated;
+    },
+  };
+})();
