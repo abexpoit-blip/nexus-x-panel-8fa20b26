@@ -185,12 +185,7 @@ const AgentGetNumber = () => {
               <span className={cn("truncate", !selectedCountry && "text-muted-foreground")}>
                 {selectedCountry ? selectedCountry.name : "Select country..."}
               </span>
-              <div className="flex items-center gap-2 shrink-0">
-                {selectedCountry?.price_bdt != null && (
-                  <span className="text-xs text-neon-green font-semibold">৳{selectedCountry.price_bdt}</span>
-                )}
-                <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform", countryOpen && "rotate-180")} />
-              </div>
+              <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", countryOpen && "rotate-180")} />
             </button>
 
             {countryOpen && (
@@ -216,20 +211,17 @@ const AgentGetNumber = () => {
                         key={c.id}
                         onClick={() => { setCountryId(c.id); setCountryOpen(false); setCountrySearch(""); }}
                         className={cn(
-                          "w-full px-3 py-2.5 text-left text-sm flex items-center justify-between gap-2 hover:bg-white/[0.06] transition-colors",
+                          "w-full px-3 py-2.5 text-left text-sm flex items-center gap-2 hover:bg-white/[0.06] transition-colors",
                           countryId === c.id && "bg-primary/10 text-primary"
                         )}
                       >
                         <span className="truncate">{c.name}</span>
-                        {c.price_bdt != null && (
-                          <span className="text-xs text-neon-green font-semibold shrink-0">৳{c.price_bdt}</span>
-                        )}
                       </button>
                     ))
                   )}
                 </div>
                 <div className="px-3 py-2 text-[10px] text-muted-foreground border-t border-white/[0.06] bg-white/[0.02]">
-                  {filteredCountries.length} of {countries.length} countries · prices in BDT
+                  {filteredCountries.length} of {countries.length} countries
                 </div>
               </div>
             )}
@@ -246,9 +238,7 @@ const AgentGetNumber = () => {
             >
               <option value="" className="bg-card">Select operator</option>
               {operators.map((o) => (
-                <option key={o.id} value={o.id} className="bg-card">
-                  {o.name}{o.price_bdt != null ? ` — ৳${o.price_bdt}` : ""}
-                </option>
+                <option key={o.id} value={o.id} className="bg-card">{o.name}</option>
               ))}
             </select>
           </div>
@@ -264,7 +254,6 @@ const AgentGetNumber = () => {
               <>
                 <Hash className="w-4 h-4 mr-2" />
                 Get {quantity > 1 ? `${quantity} Numbers` : "Number"}
-                {totalCost != null ? ` · ৳${totalCost}` : ""}
               </>
             )}
           </Button>
@@ -284,14 +273,14 @@ const AgentGetNumber = () => {
                   onClick={() => setQuantity(q)}
                   disabled={maintenanceMode}
                   className={cn(
-                    "min-w-[64px] h-9 px-3 rounded-lg text-xs font-bold transition-all border",
+                    "min-w-[56px] h-9 px-4 rounded-lg text-xs font-bold transition-all border",
                     quantity === q
                       ? "bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground border-transparent shadow-[0_0_18px_-4px_hsl(var(--primary)/0.6)]"
                       : "bg-white/[0.03] text-foreground border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.16]",
                     maintenanceMode && "opacity-40 cursor-not-allowed",
                   )}
                 >
-                  {q}× {cost != null && <span className="ml-1 opacity-80">৳{cost * q}</span>}
+                  {q}×
                 </button>
               ))}
             </div>
@@ -306,12 +295,10 @@ const AgentGetNumber = () => {
             <span className="text-xs text-muted-foreground">
               Daily: <span className="text-primary font-semibold">{usedToday}</span> / {dailyLimit}
             </span>
-            {cost != null && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Wallet className="w-3.5 h-3.5 text-neon-green" />
-                Cost per number: <span className="text-neon-green font-semibold">৳{cost} BDT</span>
-              </span>
-            )}
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="w-3.5 h-3.5 text-neon-green" />
+              Earn commission on every successful OTP
+            </span>
           </div>
           <div className="w-32 h-1.5 rounded-full bg-white/[0.06]">
             <div
@@ -321,41 +308,6 @@ const AgentGetNumber = () => {
           </div>
         </div>
       </GlassCard>
-
-      {/* Pricing rate card grid */}
-      {countries.length > 0 && (
-        <GlassCard>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="font-display font-semibold text-foreground">Country Pricing</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Tap any country to select it instantly</p>
-            </div>
-            <span className="text-xs text-muted-foreground">{countries.length} countries available</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-            {countries.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setCountryId(c.id)}
-                className={cn(
-                  "group flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border text-left transition-all",
-                  countryId === c.id
-                    ? "bg-primary/10 border-primary/40 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]"
-                    : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.12]"
-                )}
-              >
-                <span className="text-xs text-foreground truncate">{c.name}</span>
-                <span className={cn(
-                  "text-xs font-semibold shrink-0",
-                  countryId === c.id ? "text-primary" : "text-neon-green"
-                )}>
-                  ৳{c.price_bdt ?? "—"}
-                </span>
-              </button>
-            ))}
-          </div>
-        </GlassCard>
-      )}
 
       {numbers.length > 0 && (
         <GlassCard>
