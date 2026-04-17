@@ -6,7 +6,7 @@ import { useNotifications } from "@/contexts/NotificationContext";
 import {
   LayoutDashboard, Hash, MessageSquare, List, BarChart3, Bell, Inbox,
   Users, Server, DollarSign, FileText, LogOut, X, Layers,
-  Wallet, Shield, User, CreditCard, Trophy, Bot
+  Wallet, Shield, User, CreditCard, Trophy, Bot, ArrowDownToLine
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -35,6 +35,7 @@ const adminNav: NavItem[] = [
   { label: "Rate Card", path: "/admin/rates", icon: DollarSign },
   { label: "Allocation", path: "/admin/allocation", icon: Layers },
   { label: "Payments", path: "/admin/payments", icon: CreditCard },
+  { label: "Withdrawals", path: "/admin/withdrawals", icon: ArrowDownToLine },
   { label: "Security", path: "/admin/security", icon: Shield },
   { label: "SMS CDR", path: "/admin/cdr", icon: FileText },
   { label: "IMS Bot", path: "/admin/ims-status", icon: Bot },
