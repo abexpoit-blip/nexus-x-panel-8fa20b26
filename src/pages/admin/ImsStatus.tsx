@@ -177,6 +177,12 @@ const AdminImsStatus = () => {
           {/* Credentials editor */}
           <CredentialsEditor onSaved={() => refetch()} />
 
+          {/* Manual paste-numbers */}
+          <ManualPastePool
+            existingRanges={poolData?.ranges?.map(r => r.name) ?? []}
+            onAdded={() => { refetch(); refetchPool(); }}
+          />
+
           {/* Auto-pause meter */}
           {(s.emptyLimit ?? 0) > 0 && (
             <div className="glass-card border border-white/[0.06] rounded-xl p-4">
