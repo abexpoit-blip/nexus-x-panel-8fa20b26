@@ -74,7 +74,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     const stored = localStorage.getItem("nexus_notif_prefs");
     return stored ? { ...DEFAULT_PREFERENCES, ...JSON.parse(stored) } : DEFAULT_PREFERENCES;
   });
-  const eventIndexRef = useRef(0);
+  const [serverUnread, setServerUnread] = useState(0);
   const prefsRef = useRef(preferences);
   prefsRef.current = preferences;
 
@@ -84,7 +84,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const unreadAnnouncements = announcements.filter((a) => !a.read).length;
-  const totalUnread = unreadCount + unreadAnnouncements;
+  // Tab title uses real backend unread (set by NotificationBell) + in-app announcements
+  const totalUnread = serverUnread + unreadAnnouncements;
 
   useEffect(() => {
     document.title = totalUnread > 0 ? `(${totalUnread}) Nexus X` : "Nexus X";
@@ -123,15 +124,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setAnnouncements((prev) => [newAnnouncement, ...prev]);
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const event = SIMULATED_EVENTS[eventIndexRef.current % SIMULATED_EVENTS.length];
-      eventIndexRef.current += 1;
-      addNotification(event);
-    }, 18000 + Math.random() * 12000);
-
-    return () => clearInterval(interval);
-  }, [addNotification]);
+  // Production: no simulated events. Real notifications arrive via NotificationBell polling.
+  const setUnreadFromServer = useCallback((n: number) => setServerUnread(n), []);
 
   const markAsRead = useCallback((id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
