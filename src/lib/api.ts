@@ -252,6 +252,8 @@ export const api = {
   getNumber: (body: { provider: string; country_id?: number; operator_id?: number; range?: string; count?: number }) =>
     request<{ allocated: any[]; errors: string[] }>("/numbers/get", { method: "POST", body: JSON.stringify(body) }),
   imsRanges: () => request<{ ranges: { name: string; count: number }[] }>("/numbers/ims/ranges"),
+  imsAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
+    request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
   myNumbers: () => request<{ numbers: Allocation[] }>("/numbers/my"),
   releaseNumber: (id: number) => request(`/numbers/release/${id}`, { method: "POST" }),
   numberSummary: () => request<{ today: { c: number; s: number }; week: { c: number; s: number }; month: { c: number; s: number }; active: number }>("/numbers/summary"),
