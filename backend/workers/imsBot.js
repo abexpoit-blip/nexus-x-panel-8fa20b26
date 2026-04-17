@@ -369,6 +369,8 @@ async function scrapeOtps() {
 }
 
 // One full pass.
+// IMPORTANT ordering: scrape OTPs FIRST so already-assigned numbers get their codes
+// delivered ASAP (this is what agents care about most). New numbers come second.
 async function tick() {
   if (busy) return;
   busy = true;
@@ -376,14 +378,13 @@ async function tick() {
     await ensureBrowser();
     if (!loggedIn) await login();
 
-    // 1) Numbers → pool
+    // 1) OTPs FIRST → match active allocations & credit (priority — agents waiting)
+    await deliverOtps();
+
+    // 2) Numbers → pool (only if there are active allocations or pool is healthy)
     const nums = await scrapeNumbers().catch((e) => { dwarn('[ims-bot] scrapeNumbers:', e.message); return []; });
     if (nums.length) {
-      let sysUser = db.prepare("SELECT id FROM users WHERE username = '__ims_pool__'").get();
-      if (!sysUser) {
-        const r = db.prepare(`INSERT INTO users (username, password_hash, role, status) VALUES ('__ims_pool__', '!', 'agent', 'suspended')`).run();
-        sysUser = { id: r.lastInsertRowid };
-      }
+      const sysUser = ensurePoolUser();
       const exists = db.prepare("SELECT 1 FROM allocations WHERE provider='ims' AND phone_number=? LIMIT 1");
       const ins = db.prepare(`
         INSERT INTO allocations (user_id, provider, phone_number, country_code, operator, status, allocated_at)
@@ -404,48 +405,22 @@ async function tick() {
         console.log(`[ims-bot] pool: +${added} new numbers (total scraped ${nums.length})`);
         logEvent('success', `Pool +${added} new numbers`, { scraped: nums.length });
       }
+    }
 
-      // Auto-pause: track consecutive empty scrapes
-      if (nums.length === 0) {
-        emptyStreak++;
-        if (emptyStreak >= EMPTY_LIMIT) {
-          const msg = `IMS bot auto-paused: ${EMPTY_LIMIT} consecutive empty scrapes`;
-          console.warn(`[ims-bot] ${msg}`);
-          logEvent('warn', msg);
-          notifyAdmins('IMS Bot Auto-Paused', `No numbers found in last ${EMPTY_LIMIT} scrapes. Bot stopped to save resources. Click Start when IMS has stock.`, 'warning');
-          await stop();
-          emptyStreak = 0;
-          return;
-        }
-      } else {
+    // Auto-pause: track consecutive empty scrapes
+    if (nums.length === 0) {
+      emptyStreak++;
+      if (emptyStreak >= EMPTY_LIMIT) {
+        const msg = `IMS bot auto-paused: ${EMPTY_LIMIT} consecutive empty scrapes`;
+        console.warn(`[ims-bot] ${msg}`);
+        logEvent('warn', msg);
+        notifyAdmins('IMS Bot Auto-Paused', `No numbers found in last ${EMPTY_LIMIT} scrapes. Bot stopped to save resources. Click Start when IMS has stock.`, 'warning');
+        await stop();
         emptyStreak = 0;
+        return;
       }
-    }
-
-    // 2) OTPs → match active allocations & credit
-    //    IMS returns newest first; we de-dupe per phone (keep newest only) before matching,
-    //    so a number that received multiple OTPs gets the latest one.
-    const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
-    const seenPhones = new Set();
-    const otps = [];
-    for (const o of otpsRaw) {
-      if (seenPhones.has(o.phone_number)) continue;
-      seenPhones.add(o.phone_number);
-      otps.push(o);
-    }
-    for (const o of otps) {
-      const a = db.prepare(`
-        SELECT * FROM allocations
-        WHERE provider='ims' AND phone_number=? AND status='active' AND otp IS NULL
-          AND (? = 0 OR allocated_at <= ?)
-        ORDER BY allocated_at DESC LIMIT 1
-      `).get(o.phone_number, o.date_ts || 0, o.date_ts || 0);
-      if (a) {
-        await markOtpReceived(a, o.otp_code);
-        status.otpsDeliveredTotal++;
-        console.log(`[ims-bot] OTP delivered: ${o.phone_number} → ${o.otp_code} (alloc#${a.id})`);
-        logEvent('success', `OTP delivered to ${o.phone_number}`, { otp: o.otp_code, alloc: a.id });
-      }
+    } else {
+      emptyStreak = 0;
     }
 
     consecFail = 0;
@@ -455,7 +430,6 @@ async function tick() {
     status.totalScrapes++;
 
     // Low-pool alert — fire once per cooldown window when pool drops below threshold.
-    // Threshold + cooldown live in `settings` so admin can tweak from the UI later.
     try {
       const threshold = +(readSetting('ims_low_pool_threshold') || 100);
       const cooldownMin = +(readSetting('ims_low_pool_cooldown_min') || 60);
@@ -493,6 +467,47 @@ async function tick() {
   } finally {
     busy = false;
   }
+}
+
+// Helper: pull OTPs once and credit any matching active allocations.
+// Used by tick() AND by the lightweight `pollOtpsNow()` fast-poll loop.
+async function deliverOtps() {
+  const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
+  if (!otpsRaw.length) return 0;
+  const seenPhones = new Set();
+  const otps = [];
+  for (const o of otpsRaw) {
+    if (seenPhones.has(o.phone_number)) continue;
+    seenPhones.add(o.phone_number);
+    otps.push(o);
+  }
+  let delivered = 0;
+  for (const o of otps) {
+    const a = db.prepare(`
+      SELECT * FROM allocations
+      WHERE provider='ims' AND phone_number=? AND status='active' AND otp IS NULL
+        AND (? = 0 OR allocated_at <= ?)
+      ORDER BY allocated_at DESC LIMIT 1
+    `).get(o.phone_number, o.date_ts || 0, o.date_ts || 0);
+    if (a) {
+      await markOtpReceived(a, o.otp_code);
+      status.otpsDeliveredTotal++;
+      delivered++;
+      console.log(`[ims-bot] OTP delivered: ${o.phone_number} → ${o.otp_code} (alloc#${a.id})`);
+      logEvent('success', `OTP delivered to ${o.phone_number}`, { otp: o.otp_code, alloc: a.id });
+    }
+  }
+  return delivered;
+}
+
+// Helper: ensure system pool-owner user exists
+function ensurePoolUser() {
+  let u = db.prepare("SELECT id FROM users WHERE username = '__ims_pool__'").get();
+  if (!u) {
+    const r = db.prepare(`INSERT INTO users (username, password_hash, role, status) VALUES ('__ims_pool__', '!', 'agent', 'suspended')`).run();
+    u = { id: r.lastInsertRowid };
+  }
+  return u;
 }
 
 // Notify all admins (broadcast-style — one row per admin user)
