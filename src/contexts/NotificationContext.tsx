@@ -86,7 +86,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   prefsRef.current = preferences;
 
   useEffect(() => {
-    localStorage.setItem("nexus_announcements", JSON.stringify(announcements));
+    localStorage.setItem(ANNOUNCEMENTS_KEY, JSON.stringify(announcements));
   }, [announcements]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
