@@ -145,6 +145,12 @@ function demoRoute(path: string, opts: RequestInit): any {
   if (path === "/admin/ims-restart" && method === "POST") { demoImsState.restart(); return { ok: true }; }
   if (path === "/admin/ims-start" && method === "POST") { demoImsState.start(); return { ok: true }; }
   if (path === "/admin/ims-stop" && method === "POST") { demoImsState.stop(); return { ok: true }; }
+  if (path === "/admin/ims-credentials" && method === "GET") return {
+    enabled: true, base_url: "https://www.imssms.org", username: "Shovonkhan7",
+    password_masked: "Sh****34", has_password: true,
+    source: { username: "database", password: "database" },
+  };
+  if (path === "/admin/ims-credentials" && method === "PUT") { demoImsState.restart(); return { ok: true }; }
   if (path === "/admin/provider-status") return {
     providers: [
       { id: "acchub", name: "AccHub", configured: true, baseUrl: "https://sms.acchub.io", username: "Sh****YE", loggedIn: true, balance: 24.85, currency: "USD", lastError: null, otpHistoryCount: 12 },
@@ -361,6 +367,13 @@ export const api = {
     imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),
     imsStart: () => request<{ ok: boolean }>("/admin/ims-start", { method: "POST" }),
     imsStop: () => request<{ ok: boolean }>("/admin/ims-stop", { method: "POST" }),
+    imsCredentials: () => request<{
+      enabled: boolean; base_url: string; username: string;
+      password_masked: string; has_password: boolean;
+      source: { username: string; password: string };
+    }>("/admin/ims-credentials"),
+    imsCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/ims-credentials", { method: "PUT", body: JSON.stringify(body) }),
     providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
   },
 };

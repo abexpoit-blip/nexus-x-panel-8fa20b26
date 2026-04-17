@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GradientMesh, PageHeader } from "@/components/premium";
-import { Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText, AlertTriangle, RefreshCw, Power, Info, Play, Square } from "lucide-react";
+import { Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText, AlertTriangle, RefreshCw, Power, Info, Play, Square, KeyRound, Save, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -142,6 +142,9 @@ const AdminImsStatus = () => {
             <Pill ok={s.lastScrapeOk} label={s.lastScrapeOk ? "Last scrape OK" : "Last scrape failed"} />
           </div>
 
+          {/* Credentials editor */}
+          <CredentialsEditor onSaved={() => refetch()} />
+
           {/* Auto-pause meter */}
           {(s.emptyLimit ?? 0) > 0 && (
             <div className="glass-card border border-white/[0.06] rounded-xl p-4">
@@ -256,6 +259,158 @@ const Row = ({ label, value, mono, accent }: { label: string; value: string; mon
   <div className="flex items-start justify-between gap-3 py-1 border-b border-white/[0.04] last:border-0">
     <span className="text-muted-foreground text-xs uppercase tracking-wider">{label}</span>
     <span className={cn("text-right break-all", mono && "font-mono text-xs", accent || "text-foreground")}>{value}</span>
+  </div>
+);
+
+const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
+  const [open, setOpen] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ username: "", password: "", base_url: "https://www.imssms.org", enabled: true });
+  const { data, refetch } = useQuery({
+    queryKey: ["ims-credentials"],
+    queryFn: () => api.admin.imsCredentials(),
+  });
+
+  useEffect(() => {
+    if (data) setForm({
+      username: data.username || "",
+      password: "",
+      base_url: data.base_url || "https://www.imssms.org",
+      enabled: !!data.enabled,
+    });
+  }, [data]);
+
+  const save = async () => {
+    if (!form.username.trim()) { toast.error("Username required"); return; }
+    if (!data?.has_password && !form.password) { toast.error("Password required"); return; }
+    setSaving(true);
+    try {
+      await api.admin.imsCredentialsSave({
+        username: form.username.trim(),
+        password: form.password || undefined, // only send if changed
+        base_url: form.base_url.trim(),
+        enabled: form.enabled,
+      });
+      toast.success("Credentials saved — bot restarting with new login");
+      setForm((f) => ({ ...f, password: "" }));
+      setShowPwd(false);
+      refetch();
+      setTimeout(onSaved, 2000);
+    } catch (e) {
+      toast.error("Save failed: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card border border-white/[0.06] rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-neon-cyan/10 border border-neon-cyan/20 flex items-center justify-center">
+            <KeyRound className="w-4 h-4 text-neon-cyan" />
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-semibold">IMS Login Credentials</div>
+            <div className="text-xs text-muted-foreground">
+              {data ? (
+                <>
+                  User: <span className="font-mono text-foreground/80">{data.username || "—"}</span> ·
+                  Password: <span className="font-mono text-foreground/80">{data.password_masked || "(not set)"}</span> ·
+                  Source: <span className="text-neon-cyan/80">{data.source.password}</span>
+                </>
+              ) : "Loading…"}
+            </div>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Edit"}</span>
+      </button>
+
+      {open && data && (
+        <div className="border-t border-white/[0.06] p-5 space-y-4 bg-black/20">
+          <p className="text-xs text-muted-foreground flex items-start gap-2">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-neon-cyan" />
+            Saved credentials override the .env file and apply on next bot start. Bot will auto-restart after save.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Base URL">
+              <input
+                value={form.base_url}
+                onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+                placeholder="https://www.imssms.org"
+                className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono focus:border-neon-cyan/50 outline-none"
+              />
+            </Field>
+            <Field label="IMS Username">
+              <input
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                placeholder="your IMS username"
+                className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono focus:border-neon-cyan/50 outline-none"
+              />
+            </Field>
+            <Field label={data.has_password ? "New Password (leave blank to keep current)" : "IMS Password"}>
+              <div className="relative">
+                <input
+                  type={showPwd ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder={data.has_password ? "•••••••• (unchanged)" : "enter password"}
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 pr-10 text-sm font-mono focus:border-neon-cyan/50 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPwd((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                >
+                  {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </Field>
+            <Field label="Bot Status">
+              <label className="flex items-center gap-3 bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 cursor-pointer hover:border-white/[0.15]">
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                  className="w-4 h-4 accent-neon-green"
+                />
+                <span className="text-sm">{form.enabled ? "Enabled (auto-start on save)" : "Disabled"}</span>
+              </label>
+            </Field>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => { setOpen(false); setForm((f) => ({ ...f, password: "" })); }}
+              className="px-4 py-2 rounded-md text-xs font-semibold bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan hover:bg-neon-cyan/20 transition disabled:opacity-50"
+            >
+              <Save className={cn("w-3.5 h-3.5", saving && "animate-pulse")} />
+              {saving ? "Saving & restarting…" : "Save & Restart Bot"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div className="space-y-1.5">
+    <label className="text-xs uppercase tracking-wider text-muted-foreground">{label}</label>
+    {children}
   </div>
 );
 

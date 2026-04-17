@@ -264,6 +264,56 @@ router.post('/ims-stop', async (req, res) => {
   }
 });
 
+// GET /api/admin/ims-credentials — return saved (masked) credentials
+router.get('/ims-credentials', (req, res) => {
+  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  const username = get('ims_username') || process.env.IMS_USERNAME || '';
+  const password = get('ims_password') || process.env.IMS_PASSWORD || '';
+  const base_url = get('ims_base_url') || process.env.IMS_BASE_URL || 'https://www.imssms.org';
+  const enabled = (get('ims_enabled') || process.env.IMS_ENABLED || 'false').toString().toLowerCase() === 'true';
+  const mask = (s) => s ? (s.length <= 4 ? '****' : s.slice(0,2) + '****' + s.slice(-2)) : '';
+  res.json({
+    enabled,
+    base_url,
+    username,                     // username shown plain (it's not secret)
+    password_masked: mask(password),
+    has_password: !!password,
+    source: {
+      username: get('ims_username') ? 'database' : (process.env.IMS_USERNAME ? 'env' : 'none'),
+      password: get('ims_password') ? 'database' : (process.env.IMS_PASSWORD ? 'env' : 'none'),
+    },
+  });
+});
+
+// PUT /api/admin/ims-credentials — save credentials to settings (overrides .env on next start)
+router.put('/ims-credentials', async (req, res) => {
+  try {
+    const { username, password, base_url, enabled } = req.body || {};
+    const upsert = db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `);
+    if (typeof username === 'string' && username.length) upsert.run('ims_username', username.trim());
+    if (typeof password === 'string' && password.length) upsert.run('ims_password', password);
+    if (typeof base_url === 'string' && base_url.length) upsert.run('ims_base_url', base_url.trim().replace(/\/$/, ''));
+    if (typeof enabled === 'boolean') upsert.run('ims_enabled', enabled ? 'true' : 'false');
+
+    logFromReq(req, 'ims_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
+
+    // Hot-restart bot so new credentials take effect immediately
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Credentials updated by admin — bot restarting');
+    } catch (e) {
+      console.warn('ims-credentials: restart failed:', e.message);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/admin/provider-status — health for all configured providers (AccHub balance, IMS bot, etc.)
 router.get('/provider-status', async (req, res) => {
   try {

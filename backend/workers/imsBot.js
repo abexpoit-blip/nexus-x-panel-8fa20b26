@@ -19,10 +19,24 @@ const fs = require('fs');
 const db = require('../lib/db');
 const { markOtpReceived } = require('../routes/numbers');
 
-const ENABLED = String(process.env.IMS_ENABLED || 'false').toLowerCase() === 'true';
-const BASE_URL = (process.env.IMS_BASE_URL || 'https://www.imssms.org').replace(/\/$/, '');
-const USERNAME = process.env.IMS_USERNAME || '';
-const PASSWORD = process.env.IMS_PASSWORD || '';
+// Read DB-stored override (settings table); falls back to .env
+function readSetting(key) {
+  try { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null; }
+  catch (_) { return null; }
+}
+function resolveCreds() {
+  const dbEnabled = readSetting('ims_enabled');
+  const dbUser = readSetting('ims_username');
+  const dbPass = readSetting('ims_password');
+  const dbBase = readSetting('ims_base_url');
+  return {
+    ENABLED: (dbEnabled !== null ? dbEnabled : (process.env.IMS_ENABLED || 'false')).toString().toLowerCase() === 'true',
+    BASE_URL: (dbBase || process.env.IMS_BASE_URL || 'https://www.imssms.org').replace(/\/$/, ''),
+    USERNAME: dbUser || process.env.IMS_USERNAME || '',
+    PASSWORD: dbPass || process.env.IMS_PASSWORD || '',
+  };
+}
+let { ENABLED, BASE_URL, USERNAME, PASSWORD } = resolveCreds();
 const HEADLESS = String(process.env.IMS_HEADLESS || 'true').toLowerCase() !== 'false';
 const CHROME_PATH = process.env.IMS_CHROME_PATH || undefined;
 const INTERVAL = +(process.env.IMS_SCRAPE_INTERVAL || 8);
@@ -356,16 +370,20 @@ function notifyAdmins(title, message, type = 'warning') {
 }
 
 function start() {
+  // Re-read credentials from DB (admin may have updated via UI)
+  ({ ENABLED, BASE_URL, USERNAME, PASSWORD } = resolveCreds());
   status.enabled = ENABLED;
   status.baseUrl = BASE_URL;
   status.intervalSec = INTERVAL;
   if (!ENABLED) {
-    console.log('✗ IMS bot disabled (set IMS_ENABLED=true to enable)');
+    console.log('✗ IMS bot disabled (enable from admin panel or set IMS_ENABLED=true)');
+    logEvent('warn', 'Start skipped — bot disabled');
     return;
   }
   if (!USERNAME || !PASSWORD) {
-    console.warn('✗ IMS bot: IMS_USERNAME / IMS_PASSWORD not set');
-    status.lastError = 'IMS_USERNAME / IMS_PASSWORD not set';
+    console.warn('✗ IMS bot: credentials not set');
+    status.lastError = 'IMS credentials not set — open admin panel → IMS Status to add';
+    logEvent('error', 'Credentials missing');
     return;
   }
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
