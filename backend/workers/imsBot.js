@@ -653,4 +653,87 @@ async function scrapeNow() {
   };
 }
 
-module.exports = { start, stop, restart, tick, scrapeNow, solveCaptchaText, getStatus, logEvent };
+// =============================================================
+// Live-sync: scrape IMS once and reconcile our pool with reality.
+//   • Adds any new numbers IMS now has (same as a normal scrape)
+//   • Deletes pool numbers that are NO LONGER in IMS (sold/expired upstream)
+//   • Active/received/expired allocations are NEVER touched (agent owns them)
+// Returns: { ok, added, removed, kept, scraped, ranges }
+// =============================================================
+async function syncLive() {
+  if (!status.running) return { ok: false, error: 'Bot is not running — start it first' };
+  if (busy) return { ok: false, error: 'A scrape is already in progress' };
+
+  busy = true;
+  try {
+    await ensureBrowser();
+    if (!loggedIn) await login();
+
+    logEvent('info', 'Live-sync triggered by admin');
+    const nums = await scrapeNumbers();
+    if (!nums.length) {
+      return { ok: false, error: 'No numbers returned from IMS — login or page issue?' };
+    }
+
+    const live = new Set(nums.map(n => n.phone_number));
+    const sysUser = ensurePoolUser();
+
+    // Track ranges (operators) that appeared in this scrape
+    const liveRanges = new Set(nums.map(n => n.operator).filter(Boolean));
+
+    let added = 0, removed = 0, kept = 0;
+    const exists = db.prepare("SELECT 1 FROM allocations WHERE provider='ims' AND phone_number=? LIMIT 1");
+    const ins = db.prepare(`
+      INSERT INTO allocations (user_id, provider, phone_number, country_code, operator, status, allocated_at)
+      VALUES (?, 'ims', ?, ?, ?, 'pool', strftime('%s','now'))
+    `);
+    // Pool snapshot: only POOL rows are eligible for deletion. Active/received/expired untouched.
+    const poolRows = db.prepare(
+      "SELECT id, phone_number FROM allocations WHERE provider='ims' AND status='pool'"
+    ).all();
+    const del = db.prepare("DELETE FROM allocations WHERE id = ?");
+
+    const tx = db.transaction(() => {
+      // Add: numbers in IMS but not in DB at all
+      for (const n of nums) {
+        if (exists.get(n.phone_number)) { kept++; continue; }
+        ins.run(sysUser.id, n.phone_number, null, n.operator || null);
+        added++;
+      }
+      // Remove: pool numbers that IMS no longer has
+      for (const r of poolRows) {
+        if (!live.has(r.phone_number)) {
+          del.run(r.id);
+          removed++;
+        }
+      }
+    });
+    tx();
+
+    status.numbersScrapedTotal += nums.length;
+    status.numbersAddedTotal += added;
+    status.lastScrapeAt = Math.floor(Date.now() / 1000);
+    status.lastScrapeOk = true;
+
+    const summary = `Live-sync: +${added} added · -${removed} removed · ${kept} kept · ${nums.length} live in IMS`;
+    console.log(`[ims-bot] ${summary}`);
+    logEvent('success', summary, { ranges: [...liveRanges] });
+
+    return {
+      ok: true,
+      added, removed, kept,
+      scraped: nums.length,
+      ranges: [...liveRanges],
+    };
+  } catch (e) {
+    status.lastError = e.message;
+    status.lastErrorAt = Math.floor(Date.now() / 1000);
+    logEvent('error', 'Live-sync failed: ' + e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    busy = false;
+  }
+}
+
+module.exports = { start, stop, restart, tick, scrapeNow, syncLive, solveCaptchaText, getStatus, logEvent };
+
