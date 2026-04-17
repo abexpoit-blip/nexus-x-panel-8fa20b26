@@ -216,6 +216,52 @@ const AdminSecurity = () => {
         </>
       )}
 
+      {tab === "impersonation" && (
+        <>
+          <GlassCard className="p-4 border-neon-amber/20 bg-neon-amber/[0.03]">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 text-neon-amber shrink-0 mt-0.5" />
+              <div className="text-sm text-muted-foreground">
+                Every time an admin uses <span className="text-neon-amber font-semibold">"Login as"</span> on an agent, it's recorded here for transparency. The agent also receives an inbox notification.
+              </div>
+            </div>
+          </GlassCard>
+          <DataTable
+            columns={[
+              { key: "created_at", header: "Time", render: (r: any) => new Date(r.created_at * 1000).toLocaleString() },
+              {
+                key: "action", header: "Event",
+                render: (r: any) => (
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-mono font-semibold uppercase",
+                    r.action === "impersonation_start"
+                      ? "bg-neon-amber/15 text-neon-amber"
+                      : "bg-neon-green/15 text-neon-green"
+                  )}>
+                    {r.action === "impersonation_start" ? "🔓 Started" : "🔒 Ended"}
+                  </span>
+                ),
+              },
+              { key: "admin_username", header: "Admin", render: (r: any) => (
+                <span className="font-semibold text-neon-cyan">{r.admin_username || `#${r.admin_id || "?"}`}</span>
+              )},
+              { key: "agent_username", header: "→ Agent", render: (r: any) => (
+                <span className="font-semibold">{r.agent_username || `#${r.agent_id || "?"}`}</span>
+              )},
+              { key: "ip", header: "IP", render: (r: any) => <span className="font-mono text-xs">{r.ip || "—"}</span> },
+            ]}
+            data={impersonations}
+          />
+          {impLoading && <p className="text-center text-muted-foreground text-sm py-4">Loading…</p>}
+          {!impLoading && impersonations.length === 0 && (
+            <GlassCard className="text-center py-8">
+              <ShieldAlert className="w-10 h-10 text-muted-foreground mx-auto opacity-30" />
+              <p className="text-sm text-muted-foreground mt-3">No impersonation events yet</p>
+            </GlassCard>
+          )}
+        </>
+      )}
+
       {tab === "settings" && (
         <GlassCard glow={signupEnabled ? "cyan" : undefined}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
