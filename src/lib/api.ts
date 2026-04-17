@@ -154,6 +154,7 @@ function demoRoute(path: string, opts: RequestInit): any {
   if (path === "/withdrawals" || path === "/withdrawals/pending" || path === "/withdrawals/mine") return demoData.withdrawals();
 
   if (path === "/numbers/providers") return demoData.providers();
+  if (path === "/numbers/pricing") return demoData.pricing();
   if (path.startsWith("/numbers/countries/")) return demoData.countries();
   if (path.startsWith("/numbers/operators/")) {
     const parts = path.split("/");
