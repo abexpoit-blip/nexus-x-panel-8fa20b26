@@ -11,22 +11,60 @@
 
 const axios = require('axios');
 
-const BASE_URL = process.env.ACCHUB_BASE_URL || 'https://sms.acchub.io';
-const USERNAME = process.env.ACCHUB_USERNAME || '';
-const PASSWORD = process.env.ACCHUB_PASSWORD || '';
-
-const client = axios.create({
-  baseURL: BASE_URL,
-  timeout: 20000,
-  headers: { 'Content-Type': 'application/json' },
-});
+// Resolve credentials: DB settings (admin UI) override .env. Re-read every login.
+function resolveCreds() {
+  let dbVals = {};
+  try {
+    const db = require('../lib/db');
+    const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+    dbVals = {
+      base_url: get('acchub_base_url'),
+      username: get('acchub_username'),
+      password: get('acchub_password'),
+    };
+  } catch (_) { /* db not ready */ }
+  return {
+    BASE_URL: dbVals.base_url || process.env.ACCHUB_BASE_URL || 'https://sms.acchub.io',
+    USERNAME: dbVals.username || process.env.ACCHUB_USERNAME || '',
+    PASSWORD: dbVals.password || process.env.ACCHUB_PASSWORD || '',
+    source: {
+      base_url: dbVals.base_url ? 'database' : (process.env.ACCHUB_BASE_URL ? 'env' : 'default'),
+      username: dbVals.username ? 'database' : (process.env.ACCHUB_USERNAME ? 'env' : 'none'),
+      password: dbVals.password ? 'database' : (process.env.ACCHUB_PASSWORD ? 'env' : 'none'),
+    },
+  };
+}
 
 let cachedToken = null;
 let tokenExpiresAt = 0; // unix seconds
+let lastLoginError = null;
+
+// Reset cached token (called when admin updates credentials)
+function resetAuth() {
+  cachedToken = null;
+  tokenExpiresAt = 0;
+  lastLoginError = null;
+}
 
 async function login() {
-  if (!USERNAME || !PASSWORD) throw new Error('ACCHUB_USERNAME / ACCHUB_PASSWORD not set in .env');
-  const { data } = await client.post('/auth/login', { username: USERNAME, password: PASSWORD });
+  const { BASE_URL, USERNAME, PASSWORD } = resolveCreds();
+  if (!USERNAME || !PASSWORD) {
+    const err = new Error('ACCHUB_USERNAME / ACCHUB_PASSWORD not set (use admin Providers page or .env)');
+    lastLoginError = err.message;
+    throw err;
+  }
+  const client = axios.create({ baseURL: BASE_URL, timeout: 20000, headers: { 'Content-Type': 'application/json' } });
+  let data;
+  try {
+    ({ data } = await client.post('/auth/login', { username: USERNAME, password: PASSWORD }));
+  } catch (e) {
+    const status = e?.response?.status;
+    const body = e?.response?.data;
+    lastLoginError = status === 401
+      ? `AccHub login 401 — wrong username/password (user: ${USERNAME})`
+      : `AccHub login failed [${status || 'network'}]: ${typeof body === 'string' ? body : JSON.stringify(body || e.message)}`;
+    throw new Error(lastLoginError);
+  }
   if (!data?.access_token) throw new Error('AccHub login failed: no access_token');
   cachedToken = data.access_token;
   // JWT exp is in payload — decode to know when to refresh
