@@ -334,4 +334,65 @@ router.get('/provider-status', async (req, res) => {
   }
 });
 
+// ============================================================
+// AccHub credentials — saved to settings, override .env
+// ============================================================
+const ACCHUB_DEFAULT_URL = 'https://sms.acchub.io';
+const maskAcc = (s) => s ? (s.length <= 4 ? '****' : s.slice(0,2) + '****' + s.slice(-2)) : '';
+
+router.get('/acchub-credentials', (req, res) => {
+  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  const username = get('acchub_username') || process.env.ACCHUB_USERNAME || '';
+  const password = get('acchub_password') || process.env.ACCHUB_PASSWORD || '';
+  const base_url = get('acchub_base_url') || process.env.ACCHUB_BASE_URL || ACCHUB_DEFAULT_URL;
+  res.json({
+    base_url,
+    username,
+    password_masked: maskAcc(password),
+    has_password: !!password,
+    source: {
+      base_url: get('acchub_base_url') ? 'database' : (process.env.ACCHUB_BASE_URL ? 'env' : 'default'),
+      username: get('acchub_username') ? 'database' : (process.env.ACCHUB_USERNAME ? 'env' : 'none'),
+      password: get('acchub_password') ? 'database' : (process.env.ACCHUB_PASSWORD ? 'env' : 'none'),
+    },
+  });
+});
+
+router.put('/acchub-credentials', async (req, res) => {
+  try {
+    const { username, password, base_url } = req.body || {};
+    const upsert = db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `);
+    if (typeof username === 'string' && username.length) upsert.run('acchub_username', username.trim());
+    if (typeof password === 'string' && password.length) upsert.run('acchub_password', password);
+    if (typeof base_url === 'string' && base_url.length) upsert.run('acchub_base_url', base_url.trim().replace(/\/$/, ''));
+
+    logFromReq(req, 'acchub_credentials_updated', { meta: { username: username || '(unchanged)' } });
+
+    try {
+      const acchub = require('../providers/acchub');
+      acchub.resetAuth && acchub.resetAuth();
+    } catch (e) { console.warn('acchub resetAuth failed:', e.message); }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/acchub-test — fresh login + balance check
+router.post('/acchub-test', async (req, res) => {
+  try {
+    const acchub = require('../providers/acchub');
+    acchub.resetAuth && acchub.resetAuth();
+    const status = await acchub.getStatus();
+    if (status.lastError) return res.status(400).json({ ok: false, error: status.lastError, status });
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
