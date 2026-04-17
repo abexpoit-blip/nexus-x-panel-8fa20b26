@@ -159,16 +159,20 @@ router.post('/sync', authRequired, async (req, res) => {
   res.json({ updated, pending: pending.length });
 });
 
-// POST /api/numbers/summary — agent stats for "My Numbers" dashboard
+// GET /api/numbers/summary — REAL agent stats
+//   c = number of SUCCESSFUL OTPs (billed CDRs) in window
+//   s = total earnings (BDT) credited in that window
 router.get('/summary', authRequired, (req, res) => {
   const u = req.user.id;
   const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
   const weekStart = todayStart - 7 * 86400;
   const monthStart = todayStart - 30 * 86400;
-  const cnt = (since) => ({
-    c: db.prepare("SELECT COUNT(*) c FROM allocations WHERE user_id=? AND allocated_at >= ?").get(u, since).c,
-    s: db.prepare("SELECT COUNT(*) c FROM allocations WHERE user_id=? AND otp IS NOT NULL AND otp_received_at >= ?").get(u, since).c,
-  });
+  const cnt = (since) => {
+    const r = db.prepare(
+      "SELECT COUNT(*) c, COALESCE(SUM(price_bdt),0) s FROM cdr WHERE user_id=? AND status='billed' AND created_at >= ?"
+    ).get(u, since);
+    return { c: r.c, s: +(+r.s).toFixed(2) };
+  };
   res.json({
     today: cnt(todayStart),
     week: cnt(weekStart),
@@ -276,10 +280,19 @@ async function markOtpReceived(allocation, otpCode) {
       db.prepare(`UPDATE users SET otp_count = otp_count + 1 WHERE id = ?`).run(allocation.user_id);
     }
 
-    // Notification (different message when no payout)
+    // Notification — IMS shows short range code (e.g. "TF04 → 458291"),
+    // AccHub shows the full operator label.
+    const isIms = allocation.provider === 'ims';
+    const shortRange = (s) => {
+      if (!s) return '';
+      const parts = String(s).trim().split(/\s+/);
+      return parts[parts.length - 1] || s;
+    };
+    const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
+    const prefix = label ? `[${label}] ` : '';
     const notifMsg = agent_amount > 0
-      ? `${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
-      : `${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
+      ? `${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
+      : `${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
     db.prepare(`
       INSERT INTO notifications (user_id, title, message, type)
       VALUES (?, ?, ?, 'success')
