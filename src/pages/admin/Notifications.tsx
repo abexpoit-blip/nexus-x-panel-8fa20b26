@@ -48,20 +48,20 @@ const AdminNotifications = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Recipient</label>
-              <select value={target} onChange={(e) => setTarget(e.target.value)} className="w-full h-10 px-3 rounded-md bg-white/[0.04] border border-white/[0.08]">
-                <option value="all">All agents (broadcast)</option>
+              <select value={target} onChange={(e) => setTarget(e.target.value)} className="w-full h-10 px-3 rounded-md bg-card text-foreground border border-white/[0.08] focus:border-primary/50 outline-none">
+                <option value="all" className="bg-card text-foreground">All agents (broadcast)</option>
                 {(agents?.agents || []).map((a) => (
-                  <option key={a.id} value={a.id}>{a.username}</option>
+                  <option key={a.id} value={a.id} className="bg-card text-foreground">{a.username}</option>
                 ))}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Type</label>
-              <select value={type} onChange={(e) => setType(e.target.value)} className="w-full h-10 px-3 rounded-md bg-white/[0.04] border border-white/[0.08]">
-                <option value="info">Info</option>
-                <option value="success">Success</option>
-                <option value="warning">Warning</option>
-                <option value="error">Error</option>
+              <select value={type} onChange={(e) => setType(e.target.value)} className="w-full h-10 px-3 rounded-md bg-card text-foreground border border-white/[0.08] focus:border-primary/50 outline-none">
+                <option value="info" className="bg-card text-foreground">Info</option>
+                <option value="success" className="bg-card text-foreground">Success</option>
+                <option value="warning" className="bg-card text-foreground">Warning</option>
+                <option value="error" className="bg-card text-foreground">Error</option>
               </select>
             </div>
           </div>
