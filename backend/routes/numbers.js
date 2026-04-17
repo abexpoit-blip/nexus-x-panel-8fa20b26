@@ -280,10 +280,19 @@ async function markOtpReceived(allocation, otpCode) {
       db.prepare(`UPDATE users SET otp_count = otp_count + 1 WHERE id = ?`).run(allocation.user_id);
     }
 
-    // Notification (different message when no payout)
+    // Notification — IMS shows short range code (e.g. "TF04 → 458291"),
+    // AccHub shows the full operator label.
+    const isIms = allocation.provider === 'ims';
+    const shortRange = (s) => {
+      if (!s) return '';
+      const parts = String(s).trim().split(/\s+/);
+      return parts[parts.length - 1] || s;
+    };
+    const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
+    const prefix = label ? `[${label}] ` : '';
     const notifMsg = agent_amount > 0
-      ? `${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
-      : `${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
+      ? `${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
+      : `${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
     db.prepare(`
       INSERT INTO notifications (user_id, title, message, type)
       VALUES (?, ?, ?, 'success')
