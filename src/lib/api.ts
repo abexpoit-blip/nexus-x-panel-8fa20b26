@@ -135,6 +135,7 @@ function demoRoute(path: string, opts: RequestInit): any {
 
   if (path === "/admin/stats") return demoData.adminStats();
   if (path === "/admin/leaderboard") return demoData.leaderboard();
+  if (path.startsWith("/admin/commission-trend")) return demoData.commissionTrend(14);
   if (path === "/admin/allocations") return demoData.allocations();
   if (path === "/admin/agents") return demoData.agents();
   if (path === "/admin/ims-status") return { status: demoImsState.snapshot() };
@@ -330,6 +331,7 @@ export const api = {
       todayCommission?: number; totalCommission?: number; pendingWithdrawals?: number;
     }>("/admin/stats"),
     leaderboard: () => request<{ leaderboard: { id: number; username: string; otp_count: number }[] }>("/admin/leaderboard"),
+    commissionTrend: (days = 14) => request<{ series: { label: string; value: number; count: number }[] }>(`/admin/commission-trend?days=${days}`),
     allocations: () => request<{ allocations: Allocation[] }>("/admin/allocations"),
     imsStatus: () => request<{ status: any }>("/admin/ims-status"),
     imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),

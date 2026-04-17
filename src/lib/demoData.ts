@@ -52,6 +52,16 @@ const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
 export const demoData = {
+  commissionTrend: (days = 14) => ({
+    series: Array.from({ length: days }, (_, i) => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - (days - 1 - i));
+      const base = 4000 + Math.sin(i / 2) * 1500;
+      const value = Math.round(base + rand(-800, 1800));
+      return { label: d.toISOString().slice(5, 10), value, count: rand(80, 240) };
+    }),
+  }),
   adminStats: () => ({
     totalAgents: 24,
     activeAgents: 18,
