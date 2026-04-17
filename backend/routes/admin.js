@@ -77,6 +77,94 @@ router.get('/stats', (req, res) => {
   });
 });
 
+// GET /api/admin/system-health — consolidated dashboard widget
+//   backend uptime, memory, DB size on disk, last DB backup file (if any),
+//   IMS bot status snapshot (running/loggedIn/poolSize/lastScrape),
+//   AccHub OTP poller heartbeat, pending withdrawals count.
+router.get('/system-health', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+
+  // --- Process / runtime ---
+  const mem = process.memoryUsage();
+  const uptime_sec = Math.floor(process.uptime());
+
+  // --- DB file size on disk (best-effort) ---
+  let db_size_bytes = 0, db_path = process.env.DB_PATH || './data/nexus.db';
+  try {
+    const resolved = path.isAbsolute(db_path) ? db_path : path.resolve(process.cwd(), db_path);
+    db_size_bytes = fs.statSync(resolved).size;
+  } catch (_) { /* ignore */ }
+
+  // --- Last DB backup (look in /opt/nexus/backups or BACKUP_DIR) ---
+  let last_backup = null;
+  const backupDir = process.env.BACKUP_DIR || '/opt/nexus/backups';
+  try {
+    if (fs.existsSync(backupDir)) {
+      const files = fs.readdirSync(backupDir)
+        .filter((f) => /^nexus-.*\.db(\.gz)?$/.test(f))
+        .map((f) => {
+          const st = fs.statSync(path.join(backupDir, f));
+          return { name: f, size: st.size, mtime: Math.floor(st.mtimeMs / 1000) };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+      if (files[0]) last_backup = files[0];
+    }
+  } catch (_) { /* ignore */ }
+
+  // --- IMS bot snapshot ---
+  let ims = null;
+  try { ims = require('../workers/imsBot').getStatus?.() || null; } catch (_) {}
+
+  // --- AccHub poller heartbeat ---
+  let acchub = null;
+  try { acchub = require('../workers/otpPoller').getStatus?.() || null; } catch (_) {}
+
+  // --- Counts ---
+  const pendingWithdrawals = db.prepare("SELECT COUNT(*) c FROM withdrawals WHERE status='pending'").get().c;
+  const activeSessions = db.prepare("SELECT COUNT(*) c FROM sessions WHERE expires_at > strftime('%s','now')").get().c;
+  const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='pool'").get().c;
+
+  res.json({
+    server: {
+      uptime_sec,
+      node_version: process.version,
+      env: process.env.NODE_ENV || 'development',
+      memory_mb: {
+        rss: +(mem.rss / 1048576).toFixed(1),
+        heap_used: +(mem.heapUsed / 1048576).toFixed(1),
+        heap_total: +(mem.heapTotal / 1048576).toFixed(1),
+      },
+    },
+    database: {
+      size_bytes: db_size_bytes,
+      size_mb: +(db_size_bytes / 1048576).toFixed(2),
+      path: db_path,
+      last_backup,           // { name, size, mtime } or null
+      backup_dir: backupDir,
+    },
+    ims_bot: ims ? {
+      enabled: !!ims.enabled,
+      running: !!ims.running,
+      logged_in: !!ims.loggedIn,
+      pool_size: ims.poolSize ?? poolSize,
+      active_assigned: ims.activeAssigned ?? 0,
+      last_scrape_at: ims.lastScrapeAt ?? null,
+      last_scrape_ok: !!ims.lastScrapeOk,
+      interval_sec: ims.intervalSec ?? null,
+      otp_interval_sec: ims.otpIntervalSec ?? null,
+      consec_fail: ims.consecFail ?? 0,
+      last_error: ims.lastError ?? null,
+    } : { enabled: false, running: false, pool_size: poolSize },
+    acchub_poller: acchub || null,
+    counts: {
+      pending_withdrawals: pendingWithdrawals,
+      active_sessions: activeSessions,
+      ims_pool_size: poolSize,
+    },
+  });
+});
+
 // GET /api/admin/leaderboard
 router.get('/leaderboard', (req, res) => {
   const leaderboard = db.prepare(`
