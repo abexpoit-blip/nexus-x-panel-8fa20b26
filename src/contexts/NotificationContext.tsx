@@ -1,24 +1,21 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
+import {
+  NotificationContext,
+  type Notification,
+  type Announcement,
+  type NotificationPreferences,
+} from "./notification-context";
 
-export type NotificationType = "info" | "success" | "warning" | "error" | "system";
-
-export interface Notification {
-  id: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  time: Date;
-  read: boolean;
-  icon?: string;
-}
-
-export interface NotificationPreferences {
-  soundEnabled: boolean;
-  soundVolume: number; // 0-100
-  toastsEnabled: boolean;
-  enabledTypes: Record<NotificationType, boolean>;
-}
+// Re-export so existing imports keep working
+export { useNotifications } from "@/hooks/useNotifications";
+export type {
+  NotificationType,
+  Notification,
+  Announcement,
+  NotificationPreferences,
+  NotificationContextType,
+} from "./notification-context";
 
 const DEFAULT_PREFERENCES: NotificationPreferences = {
   soundEnabled: true,
@@ -26,35 +23,6 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
   toastsEnabled: true,
   enabledTypes: { info: true, success: true, warning: true, error: true, system: true },
 };
-
-export interface Announcement {
-  id: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  time: Date;
-  read: boolean;
-  icon?: string;
-}
-
-interface NotificationContextType {
-  notifications: Notification[];
-  announcements: Announcement[];
-  unreadCount: number;
-  panelOpen: boolean;
-  preferences: NotificationPreferences;
-  addNotification: (n: Omit<Notification, "id" | "time" | "read">) => void;
-  sendAnnouncement: (n: Omit<Announcement, "id" | "time" | "read">) => void;
-  markAsRead: (id: string) => void;
-  markAllRead: () => void;
-  markAnnouncementRead: (id: string) => void;
-  clearAll: () => void;
-  togglePanel: () => void;
-  closePanel: () => void;
-  updatePreferences: (p: Partial<NotificationPreferences>) => void;
-}
-
-const NotificationContext = createContext<NotificationContextType | null>(null);
 
 function playNotificationSound(volume: number) {
   try {
@@ -127,12 +95,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const prefsRef = useRef(preferences);
   prefsRef.current = preferences;
 
-  // Persist announcements to localStorage
   useEffect(() => {
     localStorage.setItem("nexus_announcements", JSON.stringify(announcements));
   }, [announcements]);
 
-  // Update browser tab title with unread count
   const unreadCount = notifications.filter((n) => !n.read).length;
   const unreadAnnouncements = announcements.filter((a) => !a.read).length;
   const totalUnread = unreadCount + unreadAnnouncements;
@@ -218,10 +184,4 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       {children}
     </NotificationContext.Provider>
   );
-};
-
-export const useNotifications = () => {
-  const ctx = useContext(NotificationContext);
-  if (!ctx) throw new Error("useNotifications must be used within NotificationProvider");
-  return ctx;
 };

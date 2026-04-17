@@ -1,31 +1,10 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { api, tokenStore } from "@/lib/api";
+import { AuthContext, type User } from "./auth-context";
 
-export type UserRole = "admin" | "agent";
-
-interface User {
-  id: number;
-  username: string;
-  role: UserRole;
-  balance: number;
-  otp_count: number;
-  daily_limit?: number;
-  per_request_limit?: number;
-  full_name?: string;
-  phone?: string;
-  telegram?: string;
-}
-
-interface AuthContextType {
-  user: User | null;
-  isAuthenticated: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
-  logout: () => void;
-  signupEnabled: boolean;
-  setSignupEnabled: (enabled: boolean) => void;
-}
-
-const AuthContext = createContext<AuthContextType | null>(null);
+// Re-export so existing `import { useAuth } from "@/contexts/AuthContext"` keeps working
+export { useAuth } from "@/hooks/useAuth";
+export type { UserRole, User, AuthContextType } from "./auth-context";
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
@@ -78,10 +57,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
 };
