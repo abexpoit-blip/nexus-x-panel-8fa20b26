@@ -214,6 +214,9 @@ const AdminImsStatus = () => {
           {/* Credentials editor */}
           <CredentialsEditor onSaved={() => refetch()} />
 
+          {/* OTP poll interval setting */}
+          <OtpIntervalSetting onSaved={() => refetch()} />
+
           {/* Manual paste-numbers */}
           <ManualPastePool
             existingRanges={poolData?.ranges?.map(r => r.name) ?? []}
@@ -398,6 +401,69 @@ const Row = ({ label, value, mono, accent }: { label: string; value: string; mon
     <span className={cn("text-right break-all", mono && "font-mono text-xs", accent || "text-foreground")}>{value}</span>
   </div>
 );
+
+const OtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
+  const [saving, setSaving] = useState(false);
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ["ims-otp-interval"],
+    queryFn: () => api.admin.imsOtpInterval(),
+  });
+  const current = data?.interval_sec ?? 10;
+  const opts = data?.options ?? [5, 10, 30];
+
+  const save = async (val: number) => {
+    if (val === current) return;
+    setSaving(true);
+    try {
+      await api.admin.imsOtpIntervalSave(val);
+      toast.success(`OTP poll interval set to ${val}s — bot restarting`);
+      await refetch();
+      onSaved();
+    } catch (e) {
+      toast.error("Failed: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card border border-white/[0.06] rounded-xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <Zap className="w-4 h-4 text-neon-cyan" /> OTP Poll Interval
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            How often the bot scrapes the OTP/CDR page. Lower = faster delivery, more CPU.
+            {data && (
+              <span className="ml-2 font-mono">
+                Current: <span className="text-neon-cyan font-semibold">{current}s</span>
+                <span className="text-muted-foreground/60"> ({data.source})</span>
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {opts.map((v) => (
+            <button
+              key={v}
+              onClick={() => save(v)}
+              disabled={saving || isLoading}
+              className={cn(
+                "px-4 py-2 rounded-md text-xs font-semibold border transition disabled:opacity-50",
+                v === current
+                  ? "bg-neon-cyan/15 border-neon-cyan/40 text-neon-cyan"
+                  : "bg-white/[0.04] border-white/[0.08] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              )}
+            >
+              {v}s
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
   const [open, setOpen] = useState(false);

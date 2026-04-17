@@ -144,6 +144,10 @@ function demoRoute(path: string, opts: RequestInit): any {
     source: { username: "database", password: "database" },
   };
   if (path === "/admin/ims-credentials" && method === "PUT") { demoImsState.restart(); return { ok: true }; }
+  if (path === "/admin/ims-otp-interval" && method === "GET") return {
+    interval_sec: 10, source: "env", options: [5, 10, 30], min: 3, max: 120,
+  };
+  if (path === "/admin/ims-otp-interval" && method === "PUT") { demoImsState.restart(); return { ok: true, interval_sec: 10 }; }
   if (path === "/admin/provider-status") return {
     providers: [
       { id: "acchub", name: "AccHub", configured: true, baseUrl: "https://sms.acchub.io", username: "Sh****YE", loggedIn: true, balance: 24.85, currency: "USD", lastError: null, otpHistoryCount: 12 },
@@ -383,6 +387,13 @@ export const api = {
     }>("/admin/ims-credentials"),
     imsCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
       request<{ ok: boolean }>("/admin/ims-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    imsOtpInterval: () => request<{
+      interval_sec: number; source: string; options: number[]; min: number; max: number;
+    }>("/admin/ims-otp-interval"),
+    imsOtpIntervalSave: (interval_sec: number) =>
+      request<{ ok: boolean; interval_sec: number }>("/admin/ims-otp-interval", {
+        method: "PUT", body: JSON.stringify({ interval_sec }),
+      }),
     providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
     acchubCredentials: () => request<{
       base_url: string; username: string;

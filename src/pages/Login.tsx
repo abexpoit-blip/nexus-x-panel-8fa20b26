@@ -197,7 +197,7 @@ const Login = () => {
             className="mt-6 pt-4 border-t border-white/[0.04] text-center"
           >
             <p className="text-[10px] text-muted-foreground/40 font-mono">
-              Nexus X {APP_VERSION} — Powered by Excellence
+              Nexus X {APP_VERSION} — Developed by Shovon
             </p>
           </motion.div>
         </div>
