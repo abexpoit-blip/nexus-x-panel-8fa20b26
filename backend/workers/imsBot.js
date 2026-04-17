@@ -54,6 +54,7 @@ let loggedIn = false;
 let emptyStreak = 0;        // consecutive scrapes returning 0 numbers
 let scrapeTimer = null;     // for graceful stop
 const EMPTY_LIMIT = +(process.env.IMS_EMPTY_LIMIT || 10);
+let lastLowPoolAlertAt = 0;   // unix seconds — debounce low-pool notifications
 
 // Live status (read by /api/admin/ims-status)
 const status = {
