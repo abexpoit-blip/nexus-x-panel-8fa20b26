@@ -34,6 +34,8 @@ const AgentConsole = () => {
       return next;
     });
   };
+
+  const items = useMemo(() => {
     const cdr = data?.cdr || [];
     return cdr.filter(c => c.otp_code).filter((c) => {
       if (!search) return true;
