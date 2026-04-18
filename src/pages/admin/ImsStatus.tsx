@@ -217,6 +217,9 @@ const AdminImsStatus = () => {
           {/* OTP poll interval setting */}
           <OtpIntervalSetting onSaved={() => refetch()} />
 
+          {/* OTP expiry window (5-30 min) — applies to ALL providers */}
+          <OtpExpirySetting onSaved={() => refetch()} />
+
           {/* Manual paste-numbers */}
           <ManualPastePool
             existingRanges={poolData?.ranges?.map(r => r.name) ?? []}
@@ -457,6 +460,73 @@ const OtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
               )}
             >
               {v}s
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Admin-controllable OTP expiry window (5-30 min). Higher = agents have more
+// time to receive an OTP before the number is auto-expired & released. Lower
+// = pool recycles faster, less waste on dead numbers. Applies globally
+// (IMS + AccHub + any future provider) and to the agent-side countdown timer.
+const OtpExpirySetting = ({ onSaved }: { onSaved: () => void }) => {
+  const [saving, setSaving] = useState(false);
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ["otp-expiry"],
+    queryFn: () => api.admin.otpExpiry(),
+  });
+  const currentMin = data?.expiry_min ?? 8;
+  const opts = data?.options_min ?? [5, 8, 10, 15, 20, 30];
+
+  const save = async (min: number) => {
+    if (min === currentMin) return;
+    setSaving(true);
+    try {
+      await api.admin.otpExpirySave(min);
+      toast.success(`OTP expiry set to ${min} min — agents now have ${min}m per number`);
+      await refetch();
+      onSaved();
+    } catch (e) {
+      toast.error("Failed: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-card border border-white/[0.06] rounded-xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <Zap className="w-4 h-4 text-neon-amber" /> OTP Expiry Window
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            How long an allocated number stays active waiting for an OTP before it's auto-released. Applies to all providers.
+            {data && (
+              <span className="ml-2 font-mono">
+                Current: <span className="text-neon-amber font-semibold">{currentMin} min</span>
+                <span className="text-muted-foreground/60"> ({data.source})</span>
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {opts.map((v) => (
+            <button
+              key={v}
+              onClick={() => save(v)}
+              disabled={saving || isLoading}
+              className={cn(
+                "px-4 py-2 rounded-md text-xs font-semibold border transition disabled:opacity-50",
+                v === currentMin
+                  ? "bg-neon-amber/15 border-neon-amber/40 text-neon-amber"
+                  : "bg-white/[0.04] border-white/[0.08] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+              )}
+            >
+              {v}m
             </button>
           ))}
         </div>

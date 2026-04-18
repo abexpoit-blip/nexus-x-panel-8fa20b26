@@ -62,12 +62,24 @@ const AgentGetNumber = () => {
   const [quantity, setQuantity] = useState(1);
   const [page, setPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
+  const [expirySec, setExpirySec] = useState<number>(480); // fallback 8 min
   const PAGE_SIZE = 25;
 
   // Tick once per second so elapsed-time column re-renders live
   useEffect(() => {
     const i = setInterval(() => setNowTick(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(i);
+  }, []);
+
+  // Fetch admin-configured OTP expiry window once on mount (5-30 min).
+  // Drives the per-number countdown timer so it always matches the backend
+  // cleanup cron — no more "UI says 2 min left but server already expired it".
+  useEffect(() => {
+    api.numbersConfig()
+      .then(({ otp_expiry_sec }) => {
+        if (otp_expiry_sec > 0) setExpirySec(otp_expiry_sec);
+      })
+      .catch(() => {/* keep fallback */});
   }, []);
 
   // Format a duration in seconds: "12s" / "1m 04s" / "1h 02m"
@@ -552,9 +564,12 @@ const AgentGetNumber = () => {
           <div className="space-y-1">
             {pageItems.map((n) => {
               const allocAt = n.allocated_at || nowTick;
-              const elapsed = n.otp && n.otp_received_at
-                ? n.otp_received_at - allocAt
-                : nowTick - allocAt;
+              // For received OTPs: show how long it took to arrive.
+              // For pending: show REMAINING time before expiry (counts down).
+              const elapsed = nowTick - allocAt;
+              const remaining = Math.max(0, expirySec - elapsed);
+              const tookSec = n.otp && n.otp_received_at ? n.otp_received_at - allocAt : 0;
+              const isExpired = !n.otp && remaining <= 0;
               return (
               <div
                 key={n.id}
@@ -562,7 +577,7 @@ const AgentGetNumber = () => {
               >
                 <div className={cn(
                   "w-2 h-2 rounded-full",
-                  n.otp ? "bg-neon-green" : n.status === "active" ? "bg-neon-amber animate-pulse" : "bg-neon-red"
+                  n.otp ? "bg-neon-green" : isExpired ? "bg-neon-red" : n.status === "active" ? "bg-neon-amber animate-pulse" : "bg-neon-red"
                 )} />
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-mono text-foreground">{n.phone_number}</span>
@@ -596,15 +611,27 @@ const AgentGetNumber = () => {
                     "text-xs font-mono tabular-nums",
                     n.otp
                       ? "text-neon-green/80"
-                      : elapsed > 180
+                      : isExpired
                         ? "text-neon-red"
-                        : elapsed > 60
-                          ? "text-neon-amber"
-                          : "text-muted-foreground"
+                        : remaining < 60
+                          ? "text-neon-red"
+                          : remaining < 180
+                            ? "text-neon-amber"
+                            : "text-muted-foreground"
                   )}
-                  title={n.otp ? "Time taken to receive OTP" : "Elapsed since allocation"}
+                  title={
+                    n.otp
+                      ? `OTP arrived in ${fmtDuration(tookSec)}`
+                      : isExpired
+                        ? "Expired — release & try again"
+                        : `Time left before this number expires (admin-set: ${Math.round(expirySec/60)} min)`
+                  }
                 >
-                  {fmtDuration(elapsed)}
+                  {n.otp
+                    ? fmtDuration(tookSec)
+                    : isExpired
+                      ? "expired"
+                      : `${fmtDuration(remaining)} left`}
                 </span>
                 <div className="flex justify-end">
                   <span className={cn(

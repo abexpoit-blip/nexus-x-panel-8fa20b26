@@ -4,8 +4,15 @@ const { authRequired, adminOnly } = require('../middleware/auth');
 const { logFromReq } = require('../lib/audit');
 const providers = require('../providers');
 const { agentPayout } = require('../lib/commission');
+const { getOtpExpirySec } = require('../lib/settings');
 
 const router = express.Router();
+
+// GET /api/numbers/config — config the agent UI needs (OTP expiry for the
+// per-number countdown timer). Authed-only so we don't leak settings publicly.
+router.get('/config', authRequired, (req, res) => {
+  res.json({ otp_expiry_sec: getOtpExpirySec() });
+});
 
 // GET /api/numbers/providers
 router.get('/providers', authRequired, (req, res) => {
