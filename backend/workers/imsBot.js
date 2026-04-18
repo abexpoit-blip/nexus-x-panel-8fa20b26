@@ -144,32 +144,41 @@ async function ensureBrowser() {
 }
 
 // ---- Calculator captcha solver ----
-// Reads the captcha label, evaluates basic arithmetic, returns the answer string.
-// Handles: "5 + 3 = ?", "12-4=?", "7 × 2 = ?", "8 / 2 = ?", "What is 5+3"
+// Reads the captcha label, evaluates arithmetic, returns the answer string.
+// Handles: "5 + 3 = ?", "12-4=?", "7 × 2 = ?", "8 / 2 = ?",
+//          "What is 5+3", "5 + 3 + 2 = ?", "(4+2)*3=?", multi-line / noisy text.
+// Uses a SAFE arithmetic-only evaluator (no eval) to avoid code injection
+// since the input comes from a remote page.
 function solveCaptchaText(text) {
   if (!text) return null;
-  // Normalize unicode operators
-  const cleaned = text
-    .replace(/[×x✕]/gi, '*')
-    .replace(/[÷]/g, '/')
+  // Normalize unicode operators / spaces
+  const norm = String(text)
+    .replace(/[×x✕✖⨯·]/gi, '*')
+    .replace(/[÷⁄]/g, '/')
     .replace(/[−–—]/g, '-')
-    .replace(/=\s*\?/g, '')
-    .replace(/[^\d+\-*/(). ]/g, ' ');
-  // Find the arithmetic expression: e.g. "5 + 3"
-  const m = cleaned.match(/(-?\d+(?:\.\d+)?)\s*([+\-*/])\s*(-?\d+(?:\.\d+)?)/);
-  if (!m) return null;
-  const a = parseFloat(m[1]); const op = m[2]; const b = parseFloat(m[3]);
+    .replace(/[\u00A0\u2000-\u200B]/g, ' ');
+  // Strip the trailing "= ?" / "= ? :" / "?" so we focus on the LHS.
+  // Then try to find a contiguous arithmetic expression with 2+ operands.
+  // Examples that should match: "5 + 3", "5 + 3 + 2", "(4+2)*3", "12 - 4"
+  const lhs = norm.split(/=/)[0] || norm;
+  // Greedy: longest run of digits, ops, parens, dots, spaces.
+  const exprMatches = lhs.match(/[-+]?\s*\(?\s*\d+(?:\.\d+)?(?:\s*[+\-*/]\s*\(?\s*\d+(?:\.\d+)?\)?)+/g);
+  if (!exprMatches || !exprMatches.length) return null;
+  // Pick the LONGEST candidate (most likely the full captcha expression).
+  const expr = exprMatches.sort((a, b) => b.length - a.length)[0];
+  // Safe eval: ensure ONLY digits, operators, parens, dots, spaces remain.
+  const safe = expr.replace(/\s+/g, '');
+  if (!/^[-+]?[\d+\-*/().]+$/.test(safe)) return null;
   let r;
-  switch (op) {
-    case '+': r = a + b; break;
-    case '-': r = a - b; break;
-    case '*': r = a * b; break;
-    case '/': r = b === 0 ? null : a / b; break;
-  }
-  return r == null ? null : String(Number.isInteger(r) ? r : r.toFixed(2));
+  try {
+    // eslint-disable-next-line no-new-func
+    r = Function(`"use strict"; return (${safe});`)();
+  } catch (_) { return null; }
+  if (typeof r !== 'number' || !isFinite(r)) return null;
+  return String(Number.isInteger(r) ? r : Math.round(r * 100) / 100);
 }
 
-async function login() {
+async function loginOnce() {
   dlog('[ims-bot] navigating to login page');
   await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle2', timeout: 30000 });
 
@@ -218,11 +227,13 @@ async function login() {
   await page.click(finalPass, { clickCount: 3 }).catch(() => {});
   await page.type(finalPass, PASSWORD, { delay: 25 });
 
-  // Find captcha question (e.g. "What is 6 + 5 = ? :" with input next to it)
+  // Find captcha question (e.g. "What is 6 + 5 = ? :" or "5 + 3 + 2 = ?")
   const { captchaText, captchaSel } = await page.evaluate(() => {
-    // 1) Find the math expression anywhere on the page
+    // 1) Find the math expression anywhere on the page.
+    //    Supports 2+ operands: "5+3=?", "5+3+2=?", "(4+2)*3=?".
     const allText = document.body.innerText || '';
-    const mathMatch = allText.match(/(?:what\s+is\s+)?(-?\d+)\s*([+\-x×*/÷])\s*(-?\d+)\s*=\s*\?/i);
+    const exprRe = /\(?\s*-?\d+\s*(?:[+\-x×*/÷]\s*\(?\s*-?\d+\s*\)?\s*){1,5}=\s*\?/i;
+    const mathMatch = allText.match(exprRe);
     if (!mathMatch) return { captchaText: null, captchaSel: null };
     const expr = mathMatch[0];
 
@@ -230,9 +241,7 @@ async function login() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let node, host = null;
     while ((node = walker.nextNode())) {
-      if (/(-?\d+)\s*[+\-x×*/÷]\s*(-?\d+)\s*=\s*\?/i.test(node.nodeValue || '')) {
-        host = node.parentElement; break;
-      }
+      if (exprRe.test(node.nodeValue || '')) { host = node.parentElement; break; }
     }
 
     // 3) Find the nearest answer input — search ancestors → look inside their inputs
@@ -305,9 +314,31 @@ async function login() {
   if (ok) status.lastLoginAt = Math.floor(Date.now() / 1000);
   dlog(`[ims-bot] login ${ok ? '✓' : '✗'} (url=${url})`);
   if (!ok) {
-    // Common cause: wrong captcha. Throw so caller retries.
+    // Common cause: wrong captcha. Throw so wrapper retries.
     throw new Error('IMS login failed (likely captcha) — will retry');
   }
+}
+
+// Public login() — retries up to 3 attempts. IMS serves a fresh captcha each
+// page load, so a wrong-captcha failure on attempt N often succeeds on N+1.
+async function login() {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await loginOnce();
+      if (attempt > 1) {
+        console.log(`[ims-bot] login OK on attempt ${attempt}`);
+        logEvent('success', `Login OK on attempt ${attempt}`);
+      }
+      return;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[ims-bot] login attempt ${attempt}/3 failed: ${e.message}`);
+      logEvent('warn', `Login attempt ${attempt}/3 failed: ${e.message}`);
+      await new Promise(r => setTimeout(r, 1500 * attempt));
+    }
+  }
+  throw lastErr || new Error('IMS login failed after 3 attempts');
 }
 
 // ---- Scrape SMS Numbers page (the manager's available numbers) ----
@@ -586,51 +617,57 @@ function getRecentOtpFor(phone) {
 
 // Helper: pull OTPs once and credit any matching active allocations.
 // Used by tick() AND by the lightweight `pollOtpsNow()` fast-poll loop.
+//
+// Backfill behaviour: on every scrape we (a) update the recentOtpCache with
+// the LATEST OTP per phone seen, then (b) for EVERY active+otp-pending
+// allocation we look up its phone in the cache and deliver if found.
+// This means historical OTPs already on the IMS panel are picked up the next
+// scrape after a number is assigned — no need to wait for a brand-new SMS.
 async function deliverOtps() {
   const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
-  if (!otpsRaw.length) return 0;
-  const seenPhones = new Set();
-  const otps = [];
   const nowSec = Math.floor(Date.now() / 1000);
+  // (a) Refresh cache. otpsRaw is newest-first per scrapeOtps(); the FIRST
+  // entry per phone is the most recent SMS, so we always overwrite older
+  // cache entries with the freshest OTP.
+  const seenInThisScrape = new Set();
   for (const o of otpsRaw) {
-    // Populate the recent-OTP cache so pre-allocation check can see "this number was used".
-    // Always update with the LATEST OTP for each phone (otpsRaw is newest-first per scrapeOtps).
-    if (!recentOtpCache.has(o.phone_number)) {
-      recentOtpCache.set(o.phone_number, {
-        otp_code: o.otp_code,
-        date_ts: o.date_ts || nowSec,
-        sms_text: o.sms_text,
-        cachedAt: nowSec,
-      });
-    }
-    if (seenPhones.has(o.phone_number)) continue;
-    seenPhones.add(o.phone_number);
-    otps.push(o);
+    if (seenInThisScrape.has(o.phone_number)) continue;
+    seenInThisScrape.add(o.phone_number);
+    recentOtpCache.set(o.phone_number, {
+      otp_code: o.otp_code,
+      date_ts: o.date_ts || nowSec,
+      sms_text: o.sms_text,
+      cachedAt: nowSec,
+    });
   }
+  // (b) Backfill: walk EVERY active IMS allocation that still has otp=NULL
+  // and try to match against the cache. Covers both fresh OTPs from this
+  // scrape AND historical OTPs scraped earlier.
   let delivered = 0;
-  for (const o of otps) {
-    // Match the most recent ACTIVE allocation for this phone — but ONLY if the OTP
-    // arrived AFTER the agent allocated the number. Without this, agents would receive
-    // stale OTPs from previous users of the same recycled number.
-    // Grace: 60s before allocation (clock skew + IMS slight delays).
-    const a = db.prepare(`
+  let pending = [];
+  try {
+    pending = db.prepare(`
       SELECT * FROM allocations
-      WHERE provider='ims' AND phone_number=? AND status='active' AND otp IS NULL
-      ORDER BY allocated_at DESC LIMIT 1
-    `).get(o.phone_number);
-    if (a) {
-      const allocAt = +a.allocated_at || 0;
-      // o.date_ts may be 0 if IMS didn't return a parseable date — accept in that case.
-      if (o.date_ts && allocAt && o.date_ts < (allocAt - 60)) {
-        // OTP is older than the allocation — this is a stale OTP from a previous user.
-        // Skip it (don't mark a fresh allocation with old data).
-        continue;
-      }
-      await markOtpReceived(a, o.otp_code);
+      WHERE provider='ims' AND status='active' AND otp IS NULL
+      ORDER BY allocated_at DESC
+    `).all();
+  } catch (_) { pending = []; }
+  for (const a of pending) {
+    const cached = recentOtpCache.get(a.phone_number);
+    if (!cached) continue;
+    const allocAt = +a.allocated_at || 0;
+    // Stale-OTP guard: if the cached OTP arrived more than 60s BEFORE the
+    // allocation, it's from a previous user — skip. (date_ts=0 means we
+    // couldn't parse a date, so we accept it.)
+    if (cached.date_ts && allocAt && cached.date_ts < (allocAt - 60)) continue;
+    try {
+      await markOtpReceived(a, cached.otp_code);
       status.otpsDeliveredTotal++;
       delivered++;
-      console.log(`[ims-bot] OTP delivered: ${o.phone_number} → ${o.otp_code} (alloc#${a.id})`);
-      logEvent('success', `OTP delivered to ${o.phone_number}`, { otp: o.otp_code, alloc: a.id });
+      console.log(`[ims-bot] OTP delivered: ${a.phone_number} → ${cached.otp_code} (alloc#${a.id})`);
+      logEvent('success', `OTP delivered to ${a.phone_number}`, { otp: cached.otp_code, alloc: a.id });
+    } catch (e) {
+      dwarn(`[ims-bot] markOtpReceived failed for ${a.phone_number}:`, e.message);
     }
   }
   return delivered;
