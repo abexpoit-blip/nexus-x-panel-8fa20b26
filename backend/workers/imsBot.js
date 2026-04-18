@@ -488,16 +488,17 @@ async function deliverOtps() {
   }
   let delivered = 0;
   for (const o of otps) {
-    // Match the most recent active allocation for this phone.
-    // Guard against credit-leakage from stale OTPs: if IMS reports a date_ts,
-    // it must be within 5 minutes BEFORE allocation (clock-skew tolerance) or
-    // any time AFTER. Missing date_ts → best-effort match.
+    // Match the most recent ACTIVE allocation for this phone.
+    // No date/timestamp filtering — as long as the agent's allocation is still
+    // 'active' (i.e. within the 8-min expiry window enforced by otpPoller's
+    // cleanup cron), ANY OTP that IMS shows for this number must be credited.
+    // Stale-allocation protection comes from status='active' alone:
+    // expired allocations are flipped to 'expired' and won't match here.
     const a = db.prepare(`
       SELECT * FROM allocations
       WHERE provider='ims' AND phone_number=? AND status='active' AND otp IS NULL
-        AND (? = 0 OR ? >= allocated_at - 300)
       ORDER BY allocated_at DESC LIMIT 1
-    `).get(o.phone_number, o.date_ts || 0, o.date_ts || 0);
+    `).get(o.phone_number);
     if (a) {
       await markOtpReceived(a, o.otp_code);
       status.otpsDeliveredTotal++;
