@@ -309,6 +309,7 @@ export const api = {
       rows: Array<{
         id: number; allocation_id: number | null; country_code: string | null;
         operator: string | null; phone_number: string; otp_code: string;
+        cli: string | null;
         price_bdt: number; created_at: number;
       }>;
       page: number; page_size: number; total: number; total_pages: number;
