@@ -700,10 +700,19 @@ async function deliverOtps() {
     const cached = recentOtpCache.get(a.phone_number);
     if (!cached) continue;
     const allocAt = +a.allocated_at || 0;
-    // Stale-OTP guard: if the cached OTP arrived more than 60s BEFORE the
-    // allocation, it's from a previous user — skip. (date_ts=0 means we
-    // couldn't parse a date, so we accept it.)
-    if (cached.date_ts && allocAt && cached.date_ts < (allocAt - 60)) continue;
+    // Stale-OTP guard: if the cached OTP arrived BEFORE allocation, it MIGHT
+    // be from a previous user — but only skip if this exact (number, otp)
+    // was already delivered to another allocation. Otherwise deliver it
+    // (covers numbers freshly added to pool that already have pending IMS history).
+    if (cached.date_ts && allocAt && cached.date_ts < (allocAt - 60)) {
+      const dup = db.prepare(`
+        SELECT 1 FROM allocations
+        WHERE provider='ims' AND phone_number=? AND otp=? AND id<>?
+        LIMIT 1
+      `).get(a.phone_number, cached.otp_code, a.id);
+      if (dup) continue; // truly stale — already delivered before
+      console.log(`[ims-bot] delivering pre-existing OTP for ${a.phone_number} (otp_ts=${cached.date_ts}, alloc_ts=${allocAt})`);
+    }
     try {
       await markOtpReceived(a, cached.otp_code);
       status.otpsDeliveredTotal++;
