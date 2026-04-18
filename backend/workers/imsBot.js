@@ -229,9 +229,11 @@ async function loginOnce() {
 
   // Find captcha question (e.g. "What is 6 + 5 = ? :" or "5 + 3 + 2 = ?")
   const { captchaText, captchaSel } = await page.evaluate(() => {
+    // Defensive: page may be mid-navigation — bail safely if body is null.
+    if (!document || !document.body) return { captchaText: null, captchaSel: null };
     // 1) Find the math expression anywhere on the page.
     //    Supports 2+ operands: "5+3=?", "5+3+2=?", "(4+2)*3=?".
-    const allText = document.body.innerText || '';
+    const allText = (document.body.innerText || document.body.textContent || '');
     const exprRe = /\(?\s*-?\d+\s*(?:[+\-x×*/÷]\s*\(?\s*-?\d+\s*\)?\s*){1,5}=\s*\?/i;
     const mathMatch = allText.match(exprRe);
     if (!mathMatch) return { captchaText: null, captchaSel: null };
@@ -299,9 +301,11 @@ async function loginOnce() {
   // Submit
   await Promise.all([
     page.evaluate(() => {
-      const btn = document.querySelector('button[type="submit"], input[type="submit"]') ||
-                  Array.from(document.querySelectorAll('button')).find(b => /login|sign in/i.test(b.innerText));
-      if (btn) btn.click();
+      try {
+        const btn = document.querySelector('button[type="submit"], input[type="submit"]') ||
+                    Array.from(document.querySelectorAll('button')).find(b => /login|sign in/i.test((b && b.innerText) || ''));
+        if (btn) btn.click();
+      } catch (_) { /* swallow — wait-for-nav will handle outcome */ }
     }),
     page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null),
   ]);
@@ -424,7 +428,10 @@ let _cdrPageReady = false;
 
 async function scrapeOtps() {
   if (!page) throw new Error('page not ready');
+  const _t0 = Date.now();
+  const _step = (label) => console.log(`[ims-bot][scrape] ${label} (+${Date.now() - _t0}ms)`);
   const onCdrPage = /SMSCDRStats/i.test(page.url());
+  _step(`start onCdrPage=${onCdrPage} cdrReady=${_cdrPageReady}`);
 
   if (!onCdrPage || !_cdrPageReady) {
     // First visit (or after logout) — full navigation.
@@ -474,6 +481,7 @@ async function scrapeOtps() {
     }
   }
 
+  _step('navigation/reload done');
   // Wait briefly for IMS DataTables AJAX to populate the table after page load.
   await page.waitForFunction(
     () => {
@@ -485,8 +493,9 @@ async function scrapeOtps() {
     },
     { timeout: 6000 }
   ).catch(() => null);
+  _step('table populated');
 
-  return await page.evaluate(() => {
+  const out = await page.evaluate(() => {
     const out = [];
     document.querySelectorAll('table tbody tr').forEach((row) => {
       const cells = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
@@ -540,6 +549,8 @@ async function scrapeOtps() {
     });
     return out;
   });
+  _step(`done — extracted ${out.length} rows`);
+  return out;
 }
 
 // One full pass.
