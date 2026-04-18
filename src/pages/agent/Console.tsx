@@ -36,6 +36,30 @@ const AgentConsole = () => {
     );
   }, [data, search]);
 
+  // Count OTPs per range (short label) in the last 1 hour — agents instantly
+  // see which range is hottest right now. Sorted desc, top 8 shown as chips.
+  const hotRanges = useMemo(() => {
+    const feed = data?.feed || [];
+    const cutoff = Math.floor(Date.now() / 1000) - 3600;
+    const counts = new Map<string, { count: number; isIms: boolean }>();
+    for (const c of feed) {
+      if (c.created_at < cutoff) continue;
+      const isIms = c.provider === "ims";
+      const key = isIms ? shortRange(c.operator) : (c.operator || c.country_code || "—");
+      if (!key) continue;
+      const cur = counts.get(key) || { count: 0, isIms };
+      cur.count += 1;
+      counts.set(key, cur);
+    }
+    return Array.from(counts.entries())
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [data]);
+
+  const countFor = (label: string) =>
+    hotRanges.find((r) => r.label === label)?.count || 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
