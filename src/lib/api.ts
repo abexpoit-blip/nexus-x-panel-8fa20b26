@@ -146,6 +146,9 @@ function demoRoute(path: string, opts: RequestInit): any {
     source: { username: "database", password: "database" },
   };
   if (path === "/admin/ims-credentials" && method === "PUT") { demoImsState.restart(); return { ok: true }; }
+  if (path === "/admin/ims-cookies" && method === "GET") return { has_cookies: false, count: 0, saved_at: null };
+  if (path === "/admin/ims-cookies" && method === "PUT") { demoImsState.restart(); return { ok: true }; }
+  if (path === "/admin/ims-cookies" && method === "DELETE") { demoImsState.restart(); return { ok: true }; }
   if (path === "/admin/ims-otp-interval" && method === "GET") return {
     interval_sec: 10, source: "env", options: [5, 10, 30], min: 3, max: 120,
   };
