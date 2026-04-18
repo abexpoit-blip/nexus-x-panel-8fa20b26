@@ -469,11 +469,12 @@ async function scrapeOtps() {
 // IMPORTANT ordering: scrape OTPs FIRST so already-assigned numbers get their codes
 // delivered ASAP (this is what agents care about most). New numbers come second.
 async function tick() {
-  if (busy) return;
+  if (busy) { console.log('[ims-bot] tick skipped — busy'); return; }
   busy = true;
+  console.log(`[ims-bot] tick start (loggedIn=${loggedIn})`);
   try {
     await ensureBrowser();
-    if (!loggedIn) await login();
+    if (!loggedIn) { console.log('[ims-bot] logging in…'); await login(); console.log('[ims-bot] login OK'); }
 
     // 1) OTPs FIRST → match active allocations & credit (priority — agents waiting)
     await deliverOtps();
