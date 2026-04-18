@@ -664,6 +664,12 @@ function getRecentOtpFor(phone) {
 async function deliverOtps() {
   const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
   const nowSec = Math.floor(Date.now() / 1000);
+  // Debug: list scraped phones + how many active allocations are awaiting OTP
+  try {
+    const phones = otpsRaw.slice(0, 5).map(o => `${o.phone_number}=${o.otp_code}`).join(',');
+    const pendingCount = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active' AND otp IS NULL").get().c;
+    console.log(`[ims-bot][deliver] scraped=${otpsRaw.length} top5=[${phones}] pendingAlloc=${pendingCount}`);
+  } catch (_) {}
   // (a) Refresh cache. otpsRaw is newest-first per scrapeOtps(); the FIRST
   // entry per phone is the most recent SMS, so we always overwrite older
   // cache entries with the freshest OTP.
