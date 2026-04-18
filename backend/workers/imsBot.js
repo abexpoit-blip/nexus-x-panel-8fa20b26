@@ -910,7 +910,7 @@ async function deliverOtps() {
       console.log(`[ims-bot] delivering pre-existing OTP for ${a.phone_number} (otp_ts=${cached.date_ts}, alloc_ts=${allocAt})`);
     }
     try {
-      await markOtpReceived(a, cached.otp_code);
+      await markOtpReceived(a, cached.otp_code, cached.cli || null);
       status.otpsDeliveredTotal++;
       delivered++;
       console.log(`[ims-bot] OTP delivered: ${a.phone_number} → ${cached.otp_code} (alloc#${a.id})`);
