@@ -145,8 +145,6 @@ const AgentConsole = () => {
                         🔥 {hotCount} in 1h
                       </span>
                     )}
-                      OTP received
-                    </span>
                   </div>
                   {fullDetail && (
                     <p className="mt-1 text-xs text-muted-foreground truncate">{fullDetail}</p>
