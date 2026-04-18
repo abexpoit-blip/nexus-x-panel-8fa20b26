@@ -171,6 +171,7 @@ const AgentConsole = () => {
             <p className="text-sm">No OTP activity yet — once any agent receives an OTP it will appear here.</p>
           </div>
         )}
+        {pagedControls}
       </div>
     </div>
   );
