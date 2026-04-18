@@ -369,6 +369,7 @@ export const api = {
     feed: () => request<{ feed: Array<{
       id: number; phone_masked: string; otp_length: number;
       operator: string | null; country_code: string | null;
+      cli: string | null;
       provider: string | null; created_at: number;
     }> }>("/cdr/feed"),
     refund: (id: number, note?: string) => request(`/cdr/${id}/refund`, { method: "POST", body: JSON.stringify({ note }) }),
