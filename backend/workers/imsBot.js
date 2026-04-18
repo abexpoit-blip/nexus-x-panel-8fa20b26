@@ -696,27 +696,22 @@ async function scrapeOtps() {
           }
         } catch (_) { /* non-fatal */ }
       }
+      // STRATEGY CHANGE (v2): Show-report click was hanging the page (DataTables
+      // redraw with 500 rows + AJAX overlay = JS thread frozen → callFunctionOn
+      // timeout). Use page.reload() instead — IMS auto-loads CDR table on visit,
+      // which is far more reliable than driving the click + waiting for redraw.
       try {
-        // Race the click against a 20s hard timeout so a stuck CDP call doesn't
-        // burn through the full protocolTimeout (180s) before we fall back.
         await Promise.race([
-          page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
-            const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
-            if (showBtn) showBtn.click();
-          }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('show-report click timeout 20s')), 20000)),
+          page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('reload timeout 22s')), 22000)),
         ]);
+        if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
         _lastShowReportAt = Date.now();
-        _step('show-report re-click done');
+        _cdrPageReady = false; // force page-size re-init on next scrape (auto-load needs bump)
+        _step('reload done');
       } catch (e) {
-        _step(`show-report click failed (${e.message}) — falling back to page reload`);
-        try {
-          await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
-          if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
-          _lastShowReportAt = Date.now();
-          _cdrPageReady = false; // force page-size re-init on next scrape
-        } catch (_) { /* keep going — populated check will catch it */ }
+        _step(`reload failed (${e.message}) — recycling page next tick`);
+        _cdrPageReady = false;
       }
     }
   }
@@ -745,20 +740,26 @@ async function scrapeOtps() {
   // can see WHY (wrong selector? page in different state? login redirect?).
   if (!populated) {
     try {
-      const diag = await page.evaluate(() => ({
-        url: location.href,
-        title: document.title,
-        tables: document.querySelectorAll('table').length,
-        rowsAnyTable: document.querySelectorAll('tr').length,
-        rowsTbody: document.querySelectorAll('table tbody tr').length,
-        firstRowText: (document.querySelector('table tbody tr')?.innerText || '').slice(0, 200),
-        bodyTextSample: (document.body.innerText || '').slice(0, 300),
-        hasLoadingClass: !!document.querySelector('.dataTables_processing[style*="block"], .loading'),
-      }));
+      // Race diag against 5s — if page is frozen, don't burn protocolTimeout
+      const diag = await Promise.race([
+        page.evaluate(() => ({
+          url: location.href,
+          title: document.title,
+          tables: document.querySelectorAll('table').length,
+          rowsAnyTable: document.querySelectorAll('tr').length,
+          rowsTbody: document.querySelectorAll('table tbody tr').length,
+          firstRowText: (document.querySelector('table tbody tr')?.innerText || '').slice(0, 200),
+          bodyTextSample: (document.body.innerText || '').slice(0, 300),
+          hasLoadingClass: !!document.querySelector('.dataTables_processing[style*="block"], .loading'),
+        })),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('diag timeout 5s — page frozen')), 5000)),
+      ]);
       console.log('[ims-bot][scrape][diag] not populated →', JSON.stringify(diag));
       logEvent('warn', `Scrape diag: tables=${diag.tables} tbody-rows=${diag.rowsTbody} url=${diag.url.slice(-40)}`);
     } catch (e) {
       console.warn('[ims-bot][scrape][diag] failed:', e.message);
+      // Page is frozen — recycle on next tick
+      _cdrPageReady = false;
     }
   }
 
