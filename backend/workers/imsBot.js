@@ -575,38 +575,38 @@ async function scrapeOtps() {
     }
     if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
 
-    // IMS CDR Stats page does NOT auto-load data. We MUST:
-    //   1) Set "Show Records" dropdown to "All" (or 500) — bypass 25/page limit
-    //   2) Click the "Show Report" button to trigger the AJAX query
-    // Default date range is auto-set to today (00:00 → 23:59) which is what we want.
+    // LIVE-VERIFIED behavior of /client/SMSCDRStats:
+    //   • Page AUTO-LOADS today's CDRs (00:00 → 23:59) on first visit.
+    //   • Default page size = 25. We bump to "All" via the length dropdown so
+    //     a single scrape covers 100s of OTPs (no manual pagination).
+    //   • Clicking "Show Report" triggers a fresh AJAX. Hitting it faster than
+    //     15s shows a rate-limit warning row — outer poll loop is ≥18s.
     try {
-      await page.waitForSelector('button, input[type="submit"]', { timeout: 8000 });
+      // Wait for the DataTable wrapper itself — confirms AJAX layer is ready
+      await page.waitForSelector('table tbody, .dataTables_wrapper', { timeout: 10000 });
+      const sized = await page.evaluate(() => {
+        const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
+        if (!sel) return false;
+        const opts = Array.from(sel.options || []);
+        const all = opts.find(o => /^all$/i.test(o.text) || o.value === '-1');
+        const big = opts.find(o => +o.value === 500) || opts.find(o => +o.value === 100);
+        const pick = all || big;
+        if (!pick) return false;
+        sel.value = pick.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      });
+      if (sized) _step('page-size bumped to All/500');
       await page.evaluate(() => {
-        // 1) Bump page-size to "All" via the DataTables length dropdown
-        try {
-          const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
-          if (sel) {
-            // Prefer "All" (-1), fallback 500, fallback 100
-            const opts = Array.from(sel.options || []);
-            const all = opts.find(o => /^all$/i.test(o.text) || o.value === '-1');
-            const big = opts.find(o => +o.value === 500) || opts.find(o => +o.value === 100);
-            const pick = all || big;
-            if (pick) {
-              sel.value = pick.value;
-              sel.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-          }
-        } catch (_) {}
-        // 2) Click "Show Report" button
         const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
         const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
         if (showBtn) showBtn.click();
       });
     } catch (e) {
-      console.warn('[ims-bot][scrape] show-report click failed:', e.message);
+      console.warn('[ims-bot][scrape] page-prep failed:', e.message);
     }
     _cdrPageReady = true;
-    _step('first-visit + show-report click done');
+    _step('first-visit prep done');
   } else {
     // Subsequent polls: just RE-CLICK "Show Report" — it triggers a fresh AJAX
     // query against IMS without a heavy full-page reload. Much faster than
@@ -635,11 +635,14 @@ async function scrapeOtps() {
     () => {
       const rows = document.querySelectorAll('table tbody tr');
       if (!rows.length) return false;
-      const first = (rows[0].innerText || '').toLowerCase();
-      // Skip the IMS rate-limit warning row
-      if (/refresh must be done|attempt is logged/i.test(first)) return false;
-      if (rows.length === 1 && /no data|empty|no record|loading/i.test(first)) return false;
-      return Array.from(rows).some(r => /\d{8,15}/.test(r.innerText || ''));
+      // Count how many rows look like real CDR data (have an 8-15 digit number)
+      const dataRows = Array.from(rows).filter(r => {
+        const t = (r.innerText || '').toLowerCase();
+        if (/refresh must be done|attempt is logged/i.test(t)) return false;
+        if (/^no data|^no record|^loading|^processing/i.test(t.trim())) return false;
+        return /\d{8,15}/.test(t);
+      });
+      return dataRows.length > 0;
     },
     { timeout: 15000 }
   ).catch(() => null);
