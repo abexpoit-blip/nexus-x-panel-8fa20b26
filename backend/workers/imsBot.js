@@ -665,8 +665,16 @@ function start() {
 
 // Lightweight OTP-only poll — runs frequently between heavy ticks.
 // Skips entirely if a heavy tick is in progress (which already delivers OTPs).
+let _pollSkipLogCount = 0;
 async function pollOtpsNow() {
-  if (busy || !loggedIn || !page) return;
+  if (busy || !loggedIn || !page) {
+    // Log skip reason every ~30s (every 3rd skip at 10s interval) so admins
+    // can see WHY fast-poll isn't running. Otherwise it's silent and looks dead.
+    if ((_pollSkipLogCount++ % 3) === 0) {
+      console.log(`[ims-bot] fast-poll skipped — busy=${busy} loggedIn=${loggedIn} page=${!!page}`);
+    }
+    return;
+  }
   busy = true;
   try {
     const delivered = await deliverOtps();
