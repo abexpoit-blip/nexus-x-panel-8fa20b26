@@ -94,12 +94,24 @@ function logEvent(level, message, meta) {
 function getStatus() {
   try {
     const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='pool'").get().c;
+    const claimingSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active'").get().c;
     const otpReceived = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='received'").get().c;
     const hasCookies = !!readSetting('ims_cookies');
-    return { ...status, poolSize, activeAssigned, otpReceived, emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(), cookieFailStreak: _cookieFailStreak, hasCookies };
+    return {
+      ...status, poolSize, claimingSize, activeAssigned, otpReceived,
+      emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
+      cookieFailStreak: _cookieFailStreak, hasCookies,
+      maxRowsScraped: _maxRowsSeen,
+      otpCacheSize: recentOtpCache.size,
+    };
   } catch (_) {
-    return { ...status, poolSize: 0, activeAssigned: 0, otpReceived: 0, emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(), cookieFailStreak: _cookieFailStreak, hasCookies: false };
+    return {
+      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+      emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
+      cookieFailStreak: _cookieFailStreak, hasCookies: false,
+      maxRowsScraped: _maxRowsSeen, otpCacheSize: 0,
+    };
   }
 }
 
