@@ -239,6 +239,7 @@ export type Rate = {
 export type CDR = {
   id: number; user_id: number; username?: string; provider: string;
   country_code?: string; operator?: string; phone_number: string; otp_code?: string;
+  cli?: string | null;
   price_bdt: number; status: string; note?: string; created_at: number;
 };
 export type Payment = {
