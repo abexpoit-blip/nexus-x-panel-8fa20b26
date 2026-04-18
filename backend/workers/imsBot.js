@@ -323,9 +323,104 @@ async function loginOnce() {
   }
 }
 
-// Public login() — retries up to 3 attempts. IMS serves a fresh captcha each
-// page load, so a wrong-captcha failure on attempt N often succeeds on N+1.
+// ---- Session cookie injection (bypasses captcha entirely) ----
+// Admin pastes browser cookies (from DevTools → Application → Cookies) into the
+// admin panel. We inject them into puppeteer BEFORE attempting login. If they're
+// still valid, we skip the captcha-protected login form completely.
+//
+// Accepts two formats:
+//   1) JSON array (Chrome "EditThisCookie" export): [{name,value,domain,path,...}]
+//   2) Cookie header string: "name1=value1; name2=value2; ..."
+function parseCookies(raw) {
+  if (!raw || typeof raw !== 'string') return [];
+  const txt = raw.trim();
+  if (!txt) return [];
+  // Try JSON first
+  if (txt.startsWith('[') || txt.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(txt);
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      return arr.filter(c => c && c.name && c.value).map(c => ({
+        name: c.name,
+        value: String(c.value),
+        domain: c.domain || '.imssms.org',
+        path: c.path || '/',
+        httpOnly: !!c.httpOnly,
+        secure: c.secure !== false,
+        sameSite: c.sameSite || 'Lax',
+      }));
+    } catch (_) { /* fall through to header-string parsing */ }
+  }
+  // Header-string format: "k1=v1; k2=v2"
+  const out = [];
+  for (const pair of txt.split(/;\s*/)) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    if (!name) continue;
+    out.push({
+      name,
+      value,
+      domain: '.imssms.org',
+      path: '/',
+      httpOnly: false,
+      secure: true,
+      sameSite: 'Lax',
+    });
+  }
+  return out;
+}
+
+async function tryCookieAuth() {
+  const raw = readSetting('ims_cookies');
+  if (!raw) return false;
+  const cookies = parseCookies(raw);
+  if (!cookies.length) {
+    dwarn('[ims-bot] saved cookies present but parse returned 0 entries');
+    return false;
+  }
+  try {
+    // Set cookies at the browser level (works for any path on the domain)
+    await page.setCookie(...cookies);
+    // Visit a protected page to verify the session is valid
+    await page.goto(`${BASE_URL}/client/SMSCDRStats`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    const url = page.url();
+    if (/\/login/i.test(url)) {
+      dlog('[ims-bot] cookie auth: redirected to /login → cookies expired');
+      return false;
+    }
+    // Confirm we have actual logged-in content (table or dashboard)
+    const hasContent = await page.evaluate(() => {
+      const t = document.querySelectorAll('table').length;
+      const txt = (document.body.innerText || '').toLowerCase();
+      return t > 0 || /logout|dashboard|sms/i.test(txt);
+    }).catch(() => false);
+    if (!hasContent) {
+      dlog('[ims-bot] cookie auth: page loaded but no logged-in content');
+      return false;
+    }
+    loggedIn = true;
+    status.loggedIn = true;
+    status.lastLoginAt = Math.floor(Date.now() / 1000);
+    _cdrPageReady = true;
+    console.log('[ims-bot] ✓ logged in via saved cookies (skipped captcha)');
+    logEvent('success', 'Logged in via saved session cookies (no captcha needed)');
+    return true;
+  } catch (e) {
+    dwarn('[ims-bot] cookie auth failed:', e.message);
+    return false;
+  }
+}
+
+// Public login() — tries saved cookies first, then falls back to form login
+// with up to 3 captcha attempts. IMS serves a fresh captcha each page load,
+// so a wrong-captcha failure on attempt N often succeeds on N+1.
 async function login() {
+  // 1) Try cookie auth first — instant if valid, no captcha needed
+  if (await tryCookieAuth()) return;
+
+  // 2) Fall back to full form login with retries
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -334,6 +429,18 @@ async function login() {
         console.log(`[ims-bot] login OK on attempt ${attempt}`);
         logEvent('success', `Login OK on attempt ${attempt}`);
       }
+      // After successful form login, save fresh cookies so next restart skips captcha
+      try {
+        const fresh = await page.cookies();
+        if (fresh && fresh.length) {
+          const json = JSON.stringify(fresh);
+          db.prepare(`
+            INSERT INTO settings (key, value, updated_at) VALUES ('ims_cookies', ?, strftime('%s','now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+          `).run(json);
+          dlog(`[ims-bot] saved ${fresh.length} fresh cookies for next session`);
+        }
+      } catch (e) { dwarn('[ims-bot] failed to save fresh cookies:', e.message); }
       return;
     } catch (e) {
       lastErr = e;

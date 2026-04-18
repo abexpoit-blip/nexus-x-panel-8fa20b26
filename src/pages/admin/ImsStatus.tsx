@@ -296,6 +296,9 @@ const AdminImsStatus = () => {
           {/* Credentials editor */}
           <CredentialsEditor onSaved={() => refetch()} />
 
+          {/* Session cookies — bypass captcha entirely (recommended) */}
+          <CookiesEditor onSaved={() => refetch()} />
+
           {/* OTP poll interval setting */}
           <OtpIntervalSetting onSaved={() => refetch()} />
 
@@ -829,6 +832,138 @@ const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
               <Save className={cn("w-3.5 h-3.5", saving && "animate-pulse")} />
               {saving ? "Saving & restarting…" : "Save & Restart Bot"}
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const CookiesEditor = ({ onSaved }: { onSaved: () => void }) => {
+  const [open, setOpen] = useState(false);
+  const [raw, setRaw] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const { data, refetch } = useQuery({
+    queryKey: ["ims-cookies-status"],
+    queryFn: () => api.admin.imsCookiesStatus(),
+    refetchInterval: 15000,
+  });
+
+  const save = async () => {
+    if (!raw.trim()) { toast.error("Paste cookies first"); return; }
+    setSaving(true);
+    try {
+      await api.admin.imsCookiesSave(raw.trim());
+      toast.success("Cookies saved — bot restarting and will skip captcha");
+      setRaw("");
+      refetch();
+      setTimeout(onSaved, 2000);
+    } catch (e) {
+      toast.error("Save failed: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    if (!confirm("Clear saved cookies? Bot will fall back to form login (with captcha) on next start.")) return;
+    setClearing(true);
+    try {
+      await api.admin.imsCookiesClear();
+      toast.success("Cookies cleared — bot restarting");
+      refetch();
+      setTimeout(onSaved, 2000);
+    } catch (e) {
+      toast.error("Clear failed: " + (e as Error).message);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  return (
+    <div className="glass-card border border-white/[0.06] rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-neon-purple/10 border border-neon-purple/20 flex items-center justify-center">
+            <ClipboardPaste className="w-4 h-4 text-neon-purple" />
+          </div>
+          <div className="text-left">
+            <div className="text-sm font-semibold flex items-center gap-2">
+              IMS Session Cookies
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-neon-purple/15 text-neon-purple font-bold">
+                Bypass Captcha
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {data ? (
+                data.has_cookies ? (
+                  <>
+                    <span className="text-neon-green">✓ {data.count} cookies saved</span>
+                    {data.saved_at && <> · {fmtAgo(data.saved_at)}</>}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">No cookies saved — using captcha login</span>
+                )
+              ) : "Loading…"}
+            </div>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : data?.has_cookies ? "Update" : "Add"}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-white/[0.06] p-5 space-y-4 bg-black/20">
+          <div className="text-xs text-muted-foreground space-y-2 bg-neon-purple/5 border border-neon-purple/20 rounded-lg p-3">
+            <div className="font-semibold text-neon-purple flex items-center gap-2">
+              <Info className="w-3.5 h-3.5" /> How to copy cookies (one-time setup, lasts weeks)
+            </div>
+            <ol className="list-decimal list-inside space-y-1 ml-1 text-foreground/80">
+              <li>Open <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">https://www.imssms.org/login</code> in Chrome and login normally (solve the captcha yourself)</li>
+              <li>Press <kbd className="px-1.5 py-0.5 rounded bg-black/40 border border-white/10 font-mono text-[10px]">F12</kbd> → <b>Application</b> tab → <b>Cookies</b> → click <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">https://www.imssms.org</code></li>
+              <li>Select all rows (Ctrl+A) → right-click → <b>Copy</b></li>
+              <li>OR install the <b>"EditThisCookie"</b> Chrome extension → click its icon → click the export button (📤) — copies all cookies as JSON</li>
+              <li>Paste below and click Save. Bot will use these cookies to skip captcha entirely.</li>
+            </ol>
+          </div>
+
+          <Field label="Cookies (JSON array OR &quot;name=value; name=value&quot; format)">
+            <textarea
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              rows={6}
+              placeholder='Paste either:&#10;[{"name":"PHPSESSID","value":"abc123","domain":".imssms.org",...}, ...]&#10;&#10;OR&#10;&#10;PHPSESSID=abc123; remember_me=xyz; ...'
+              className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-xs font-mono focus:border-neon-purple/50 outline-none resize-y"
+            />
+          </Field>
+
+          <div className="flex justify-between gap-2 pt-2 flex-wrap">
+            <button
+              onClick={clear}
+              disabled={clearing || !data?.has_cookies}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs font-semibold bg-destructive/10 border border-destructive/30 text-destructive hover:bg-destructive/20 transition disabled:opacity-40"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> {clearing ? "Clearing…" : "Clear Saved Cookies"}
+            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setOpen(false); setRaw(""); }}
+                className="px-4 py-2 rounded-md text-xs font-semibold bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={save}
+                disabled={saving || !raw.trim()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-neon-purple/10 border border-neon-purple/30 text-neon-purple hover:bg-neon-purple/20 transition disabled:opacity-50"
+              >
+                <Save className={cn("w-3.5 h-3.5", saving && "animate-pulse")} />
+                {saving ? "Saving & restarting…" : "Save & Restart Bot"}
+              </button>
+            </div>
           </div>
         </div>
       )}

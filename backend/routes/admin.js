@@ -536,6 +536,61 @@ router.put('/ims-credentials', async (req, res) => {
   }
 });
 
+// ---- IMS Session Cookies (bypass captcha by reusing browser session) ----
+// GET /api/admin/ims-cookies — returns whether cookies are saved (never the value)
+router.get('/ims-cookies', (req, res) => {
+  const row = db.prepare("SELECT value, updated_at FROM settings WHERE key = 'ims_cookies'").get();
+  if (!row || !row.value) return res.json({ has_cookies: false, count: 0, saved_at: null });
+  let count = 0;
+  try {
+    const parsed = JSON.parse(row.value);
+    count = Array.isArray(parsed) ? parsed.length : 0;
+  } catch (_) {
+    count = (row.value.match(/[^;\s][^;]*=/g) || []).length;
+  }
+  res.json({ has_cookies: true, count, saved_at: row.updated_at });
+});
+
+// PUT /api/admin/ims-cookies — admin pastes session cookies (JSON or "k=v; k=v" format)
+router.put('/ims-cookies', async (req, res) => {
+  try {
+    const { cookies } = req.body || {};
+    if (typeof cookies !== 'string' || !cookies.trim()) {
+      return res.status(400).json({ error: 'cookies (string) required' });
+    }
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES ('ims_cookies', ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `).run(cookies.trim());
+    logFromReq(req, 'ims_cookies_updated', { meta: { length: cookies.length } });
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Session cookies updated by admin — bot restarting');
+    } catch (e) {
+      console.warn('ims-cookies: restart failed:', e.message);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/admin/ims-cookies — clear saved cookies (force form login next time)
+router.delete('/ims-cookies', async (req, res) => {
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'ims_cookies'").run();
+    logFromReq(req, 'ims_cookies_cleared', {});
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+    } catch (_) {}
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/admin/ims-otp-interval — current fast-OTP poll interval (seconds)
 router.get('/ims-otp-interval', (req, res) => {
   const dbVal = +(db.prepare("SELECT value FROM settings WHERE key = 'ims_otp_interval'").get()?.value || 0);
