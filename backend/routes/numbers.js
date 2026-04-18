@@ -147,11 +147,31 @@ router.get('/my', authRequired, (req, res) => {
 // GET /api/numbers/history — paginated, searchable history of ALL successful
 // OTPs ever delivered to this agent. Pulled from the CDR table so it survives
 // even if the underlying allocation row is later purged by admin cleanup.
-//   ?page=1&page_size=50&q=<phone or otp substring>
+//
+// Query params:
+//   page, page_size       — pagination (default 1 / 50, max 200)
+//   q                     — substring search across phone / otp / operator
+//   from, to              — unix-second range filter on created_at
+//                           OR ISO date strings (YYYY-MM-DD); 'to' is inclusive
+//   format=csv            — stream CSV download (ignores pagination, max 50k)
 router.get('/history', authRequired, (req, res) => {
   const page = Math.max(1, +(req.query.page) || 1);
   const pageSize = Math.max(1, Math.min(200, +(req.query.page_size) || 50));
   const q = (req.query.q || '').toString().trim();
+  const isCsv = (req.query.format || '').toString().toLowerCase() === 'csv';
+
+  // Accept unix seconds OR YYYY-MM-DD. Empty → no bound.
+  const parseTs = (v, endOfDay = false) => {
+    if (v === undefined || v === null || v === '') return null;
+    const s = String(v).trim();
+    if (/^\d+$/.test(s)) return +s;
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(s)) d.setHours(23, 59, 59, 999);
+    return Math.floor(d.getTime() / 1000);
+  };
+  const fromTs = parseTs(req.query.from, false);
+  const toTs = parseTs(req.query.to, true);
 
   const where = ["user_id = ?", "status = 'billed'"];
   const params = [req.user.id];
@@ -159,7 +179,35 @@ router.get('/history', authRequired, (req, res) => {
     where.push("(phone_number LIKE ? OR otp_code LIKE ? OR operator LIKE ?)");
     params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
+  if (fromTs !== null) { where.push("created_at >= ?"); params.push(fromTs); }
+  if (toTs !== null) { where.push("created_at <= ?"); params.push(toTs); }
   const whereSql = where.join(' AND ');
+
+  // CSV branch — stream up to 50k rows, no pagination
+  if (isCsv) {
+    const rows = db.prepare(`
+      SELECT created_at, country_code, operator, phone_number, otp_code, price_bdt
+      FROM cdr WHERE ${whereSql}
+      ORDER BY created_at DESC LIMIT 50000
+    `).all(...params);
+    const escape = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="otp-history-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.write('Date,Country,Operator,Number,OTP,Earnings (BDT)\n');
+    for (const r of rows) {
+      res.write([
+        new Date(r.created_at * 1000).toISOString(),
+        escape(r.country_code), escape(r.operator),
+        escape(r.phone_number), escape(r.otp_code),
+        (+r.price_bdt).toFixed(2),
+      ].join(',') + '\n');
+    }
+    return res.end();
+  }
 
   const total = db.prepare(`SELECT COUNT(*) c FROM cdr WHERE ${whereSql}`).get(...params).c;
   const rows = db.prepare(`
@@ -171,7 +219,6 @@ router.get('/history', authRequired, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, (page - 1) * pageSize);
 
-  // Aggregate totals for the header strip (across the FULL filtered set)
   const agg = db.prepare(`
     SELECT COUNT(*) c, COALESCE(SUM(price_bdt),0) s
     FROM cdr WHERE ${whereSql}
