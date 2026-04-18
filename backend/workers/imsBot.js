@@ -158,7 +158,23 @@ async function login() {
   const passSel = 'input[name="password"], input[id="password"], input[type="password"]';
 
   // Wait for the form to mount (any input at all)
-  await page.waitForSelector('input', { timeout: 20000 });
+  try {
+    await page.waitForSelector('input', { timeout: 20000 });
+  } catch (e) {
+    // Dump page so we can see what IMS actually returned (Cloudflare? wrong URL? maintenance?)
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const html = await page.content();
+      const url = page.url();
+      const title = await page.title().catch(() => '');
+      const dumpPath = path.join(__dirname, '..', 'ims-login-dump.html');
+      fs.writeFileSync(dumpPath, `<!-- url=${url} title=${title} -->\n${html}`);
+      console.error(`[ims-bot] LOGIN PAGE HAS NO <input> — dumped to ${dumpPath} (url=${url}, title=${title})`);
+      logEvent('error', `Login page has no input. URL=${url} Title=${title}. See backend/ims-login-dump.html`);
+    } catch (_) {}
+    throw e;
+  }
 
   // Resolve the actual selectors from inside the page so we never rely on strict CSS matching
   const resolved = await page.evaluate(() => {
