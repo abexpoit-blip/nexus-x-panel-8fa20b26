@@ -13,6 +13,7 @@ import {
   Copy, Check, CalendarIcon, Download, X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { cliBadgeClass } from "@/lib/cliBadge";
 import { toast } from "sonner";
 
 // Permanent record of EVERY successful OTP this agent has ever delivered.
