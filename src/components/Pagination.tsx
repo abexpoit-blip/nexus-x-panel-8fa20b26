@@ -1,23 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePageParam } from "@/hooks/usePageParam";
 
 /**
  * Reusable client-side pagination for any list. Returns the slice + a ready
- * `controls` JSX node so pages stay tidy.
+ * `controls` JSX node so pages stay tidy. Page state is synced to the URL
+ * `?<paramKey>=N` so refresh / share links keep the same page.
  *
  * Usage:
- *   const { items, controls } = usePagination(allItems, 25);
+ *   const { items, controls } = usePagination(allItems, 25, "page");
  *   {items.map(...)}
  *   {controls}
  */
-export function usePagination<T>(all: T[], pageSize = 25) {
-  const [page, setPage] = useState(1);
+export function usePagination<T>(all: T[], pageSize = 25, paramKey = "page") {
+  const [page, setPage] = usePageParam(paramKey, 1);
   const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
-  }, [totalPages, page]);
+  }, [totalPages, page, setPage]);
 
   const items = useMemo(
     () => all.slice((page - 1) * pageSize, page * pageSize),
