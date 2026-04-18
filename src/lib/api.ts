@@ -291,11 +291,13 @@ export const api = {
   imsAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
   myNumbers: () => request<{ numbers: Allocation[]; recent_window_hours?: number }>("/numbers/my"),
-  numberHistory: (params: { page?: number; page_size?: number; q?: string } = {}) => {
+  numberHistory: (params: { page?: number; page_size?: number; q?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.page) qs.set("page", String(params.page));
     if (params.page_size) qs.set("page_size", String(params.page_size));
     if (params.q) qs.set("q", params.q);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return request<{
       rows: Array<{
@@ -306,6 +308,32 @@ export const api = {
       page: number; page_size: number; total: number; total_pages: number;
       summary: { count: number; earnings_bdt: number };
     }>(`/numbers/history${suffix}`);
+  },
+  // CSV export — fetches with auth header, triggers browser download via Blob URL.
+  // Returns the row count downloaded so the UI can toast it.
+  numberHistoryCsv: async (params: { q?: string; from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams({ format: "csv" });
+    if (params.q) qs.set("q", params.q);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE}/numbers/history?${qs.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`CSV export failed (${res.status})`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `otp-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    // Approx row count from blob size is unreliable — return text length lines instead
+    const text = await blob.text();
+    const lines = text.split("\n").filter(Boolean).length - 1; // minus header
+    return { rows: Math.max(0, lines) };
   },
   releaseNumber: (id: number) => request(`/numbers/release/${id}`, { method: "POST" }),
   numberSummary: () => request<{
