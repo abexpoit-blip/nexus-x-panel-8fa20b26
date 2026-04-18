@@ -694,9 +694,29 @@ function start() {
   if (otpTimer) { clearInterval(otpTimer); otpTimer = null; }
   status.running = true;
   emptyStreak = 0;
-  console.log(`✓ IMS bot starting (every ${INTERVAL}s, headless=${HEADLESS}, base=${BASE_URL})`);
-  setTimeout(tick, 5000);
-  scrapeTimer = setInterval(tick, INTERVAL * 1000);
+  console.log(`✓ IMS bot starting (heavy tick every ${INTERVAL}s for keepalive, headless=${HEADLESS}, base=${BASE_URL})`);
+  // First tick: just login + go to CDR page (no scraping). Fast-poll handles all OTP work.
+  setTimeout(async () => {
+    try {
+      await ensureBrowser();
+      if (!loggedIn) await login();
+      console.log('[ims-bot] initial login complete — fast-poll will handle OTP scraping');
+    } catch (e) {
+      console.error('[ims-bot] initial login failed:', e.message);
+      logEvent('error', 'Initial login failed: ' + e.message);
+    }
+  }, 3000);
+  // Heavy tick is now a SESSION KEEPALIVE only — no scraping (fast-poll does that).
+  // It just verifies loggedIn status and re-logs in if needed. Lightweight.
+  scrapeTimer = setInterval(async () => {
+    if (busy || otpBusy) return;
+    if (!loggedIn) {
+      busy = true; tickStartedAt = Date.now();
+      try { await login(); _cdrPageReady = false; }
+      catch (e) { console.warn('[ims-bot] keepalive re-login failed:', e.message); }
+      finally { busy = false; }
+    }
+  }, INTERVAL * 1000);
 
   // FAST OTP loop — every OTP_INTERVAL seconds (default 10s) we ONLY scrape the
   // OTP/CDR page (no number list, no pagination). This is what makes assigned
