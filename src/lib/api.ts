@@ -475,6 +475,12 @@ export const api = {
     }>("/admin/ims-credentials"),
     imsCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
       request<{ ok: boolean }>("/admin/ims-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    imsCookiesStatus: () =>
+      request<{ has_cookies: boolean; count: number; saved_at: number | null }>("/admin/ims-cookies"),
+    imsCookiesSave: (cookies: string) =>
+      request<{ ok: boolean }>("/admin/ims-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
+    imsCookiesClear: () =>
+      request<{ ok: boolean }>("/admin/ims-cookies", { method: "DELETE" }),
     imsOtpInterval: () => request<{
       interval_sec: number; source: string; options: number[]; min: number; max: number;
     }>("/admin/ims-otp-interval"),
