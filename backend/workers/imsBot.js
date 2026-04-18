@@ -48,7 +48,9 @@ const INTERVAL = +(process.env.IMS_SCRAPE_INTERVAL || 60);
 
 let browser = null;
 let page = null;
-let busy = false;
+let busy = false;          // heavy tick busy
+let otpBusy = false;       // fast-poll busy (independent — fixes deadlock when heavy tick takes >8s)
+let tickStartedAt = 0;     // wall-clock when current tick began (for stuck-detection)
 let consecFail = 0;
 let loggedIn = false;
 let emptyStreak = 0;        // consecutive scrapes returning 0 numbers
