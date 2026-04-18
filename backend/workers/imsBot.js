@@ -592,7 +592,18 @@ async function deliverOtps() {
   if (!otpsRaw.length) return 0;
   const seenPhones = new Set();
   const otps = [];
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const o of otpsRaw) {
+    // Populate the recent-OTP cache so pre-allocation check can see "this number was used".
+    // Always update with the LATEST OTP for each phone (otpsRaw is newest-first per scrapeOtps).
+    if (!recentOtpCache.has(o.phone_number)) {
+      recentOtpCache.set(o.phone_number, {
+        otp_code: o.otp_code,
+        date_ts: o.date_ts || nowSec,
+        sms_text: o.sms_text,
+        cachedAt: nowSec,
+      });
+    }
     if (seenPhones.has(o.phone_number)) continue;
     seenPhones.add(o.phone_number);
     otps.push(o);
