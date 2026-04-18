@@ -204,7 +204,7 @@ router.get('/history', authRequired, (req, res) => {
 
   const total = db.prepare(`SELECT COUNT(*) c FROM cdr WHERE ${whereSql}`).get(...params).c;
   const rows = db.prepare(`
-    SELECT id, allocation_id, country_code, operator, phone_number, otp_code,
+    SELECT id, allocation_id, country_code, operator, phone_number, otp_code, cli,
            price_bdt, created_at
     FROM cdr
     WHERE ${whereSql}
