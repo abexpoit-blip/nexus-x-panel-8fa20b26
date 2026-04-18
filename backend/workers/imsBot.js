@@ -876,6 +876,7 @@ async function deliverOtps() {
       otp_code: o.otp_code,
       date_ts: o.date_ts || nowSec,
       sms_text: o.sms_text,
+      cli: o.cli || null,
       cachedAt: nowSec,
     });
   }
