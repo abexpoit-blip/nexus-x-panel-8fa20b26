@@ -1135,7 +1135,7 @@ function start() {
   console.log(`✓ IMS fast-OTP poll: base=${BASE_INTERVAL}s, burst=${BURST_INTERVAL}s, idle=${IDLE_INTERVAL}s (adaptive)`);
 
   // Adaptive scheduler — recomputes next delay after each tick based on burst state.
-  let _scheduledStop = false;
+  _scheduledStop = false;
   function _scheduleNextPoll() {
     if (_scheduledStop) return;
     let nextDelay = BASE_INTERVAL;
@@ -1153,13 +1153,6 @@ function start() {
       try { await pollOtpsNow(); } finally { _scheduleNextPoll(); }
     }, nextDelay * 1000);
   }
-  // Kick off the adaptive loop. Wrap stop() so it can cancel the recursive chain.
-  const _origStop = stop;
-  stop = async function () {
-    _scheduledStop = true;
-    if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; }
-    return _origStop();
-  };
   _scheduleNextPoll();
 }
 
