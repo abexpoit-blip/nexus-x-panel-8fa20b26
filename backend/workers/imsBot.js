@@ -397,22 +397,31 @@ async function scrapeOtps() {
   // the bot scrapes 0 rows forever and no OTPs ever get delivered.
   // We click it on every visit (fresh data each tick).
   try {
-    await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button], a'));
-      const target = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
-      if (target) target.click();
+    // Click "Show Report" — try multiple selectors (button text, value, jQuery onclick, etc)
+    const clicked = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button]'));
+      const target = all.find(b => /show\s*report|search|filter|submit|refresh/i.test((b.innerText || b.value || b.title || '').trim()));
+      if (target) { target.click(); return (target.innerText || target.value || '').trim(); }
+      // Fallback: try submitting any form on the page
+      const form = document.querySelector('form');
+      if (form) { form.submit(); return 'form-submit'; }
+      return null;
     });
-    // Wait for the AJAX table refresh — DataTables typically repopulates tbody.
+    // Give DataTables/AJAX time to fetch + render. IMS server is slow — 5s baseline.
+    await new Promise(r => setTimeout(r, 2500));
+    // Then poll for actual data rows (not "no data" placeholder).
     await page.waitForFunction(
       () => {
         const rows = document.querySelectorAll('table tbody tr');
         if (!rows.length) return false;
-        // Skip the "No data available" placeholder row
-        const first = rows[0].innerText || '';
-        return rows.length > 1 || !/no data|empty/i.test(first);
+        const first = (rows[0].innerText || '').toLowerCase();
+        if (rows.length === 1 && /no data|empty|no record/i.test(first)) return false;
+        // Need at least one row with a phone-number-looking cell
+        return Array.from(rows).some(r => /\d{8,15}/.test(r.innerText || ''));
       },
       { timeout: 8000 }
     ).catch(() => null);
+    if (!clicked) console.log('[ims-bot] WARNING: Show Report button not found on CDR page');
   } catch (_) { /* non-fatal — fall through and try to read whatever is there */ }
 
   return await page.evaluate(() => {
