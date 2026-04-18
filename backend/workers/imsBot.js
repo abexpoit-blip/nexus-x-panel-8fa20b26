@@ -958,9 +958,12 @@ function start() {
   // number-list scrape only runs every 60s.
   // Priority: DB setting (admin-tunable) > env var > default 10s. Clamp 3-120s.
   const dbOtpInt = +(readSetting('ims_otp_interval') || 0);
-  const envOtpInt = +(process.env.IMS_OTP_INTERVAL || 5);
+  const envOtpInt = +(process.env.IMS_OTP_INTERVAL || 20);
   let OTP_INTERVAL = dbOtpInt > 0 ? dbOtpInt : envOtpInt;
-  if (OTP_INTERVAL < 3) OTP_INTERVAL = 3;
+  // IMS enforces "minimum 15s between CDR refreshes" — going below triggers a
+  // warning page ("attempt is logged") instead of data, and risks account ban.
+  // Hard floor is 18s to give a 3s safety buffer against IMS clock skew.
+  if (OTP_INTERVAL < 18) OTP_INTERVAL = 18;
   if (OTP_INTERVAL > 120) OTP_INTERVAL = 120;
   status.otpIntervalSec = OTP_INTERVAL;
   console.log(`✓ IMS fast-OTP poll every ${OTP_INTERVAL}s`);
