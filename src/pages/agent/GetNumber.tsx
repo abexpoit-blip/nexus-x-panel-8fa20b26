@@ -61,7 +61,22 @@ const AgentGetNumber = () => {
   const [copiedOtpId, setCopiedOtpId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [page, setPage] = useState(1);
+  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const PAGE_SIZE = 25;
+
+  // Tick once per second so elapsed-time column re-renders live
+  useEffect(() => {
+    const i = setInterval(() => setNowTick(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  // Format a duration in seconds: "12s" / "1m 04s" / "1h 02m"
+  const fmtDuration = (sec: number) => {
+    const s = Math.max(0, Math.floor(sec));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+    return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
+  };
 
   // Country search dropdown
   const [countryOpen, setCountryOpen] = useState(false);
