@@ -25,8 +25,15 @@ const AgentConsole = () => {
   });
   const [search, setSearch] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
 
-  const items = useMemo(() => {
+  const toggleReveal = (id: number) => {
+    setRevealedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
     const cdr = data?.cdr || [];
     return cdr.filter(c => c.otp_code).filter((c) => {
       if (!search) return true;
