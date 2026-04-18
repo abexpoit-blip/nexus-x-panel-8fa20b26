@@ -23,6 +23,7 @@ import AgentPayments from "@/pages/agent/Payments";
 import AgentProfile from "@/pages/agent/Profile";
 import AgentLeaderboard from "@/pages/agent/Leaderboard";
 import AgentInbox from "@/pages/agent/Inbox";
+import AgentHistory from "@/pages/agent/History";
 
 import AdminDashboard from "@/pages/admin/Dashboard";
 import AdminProviders from "@/pages/admin/Providers";
@@ -74,6 +75,7 @@ const AppRoutes = () => {
           <Route path="/agent/get-number" element={<AgentGetNumber />} />
           <Route path="/agent/console" element={<AgentConsole />} />
           <Route path="/agent/my-numbers" element={<AgentMyNumbers />} />
+          <Route path="/agent/history" element={<AgentHistory />} />
           <Route path="/agent/summary" element={<AgentSummary />} />
           <Route path="/agent/payments" element={<AgentPayments />} />
           <Route path="/agent/profile" element={<AgentProfile />} />

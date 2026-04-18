@@ -6,7 +6,7 @@ import { useNotifications } from "@/contexts/NotificationContext";
 import {
   LayoutDashboard, Hash, MessageSquare, List, BarChart3, Bell, Inbox,
   Users, Server, DollarSign, FileText, LogOut, X, Layers,
-  Wallet, Shield, User, CreditCard, Trophy, Bot, ArrowDownToLine
+  Wallet, Shield, User, CreditCard, Trophy, Bot, ArrowDownToLine, History
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -21,6 +21,7 @@ const agentNav: NavItem[] = [
   { label: "Get Number", path: "/agent/get-number", icon: Hash },
   { label: "Console", path: "/agent/console", icon: MessageSquare },
   { label: "My Numbers", path: "/agent/my-numbers", icon: List },
+  { label: "OTP History", path: "/agent/history", icon: History },
   { label: "Summary", path: "/agent/summary", icon: BarChart3 },
   { label: "Leaderboard", path: "/agent/leaderboard", icon: Trophy },
   { label: "Payments", path: "/agent/payments", icon: Wallet },
