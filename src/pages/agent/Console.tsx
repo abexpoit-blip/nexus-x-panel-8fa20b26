@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Search, RefreshCw, Inbox, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { usePagination } from "@/components/Pagination";
 
 // Shorten IMS range names like "Peru Bitel TF04" → "TF04"
 const shortRange = (operator?: string | null) => {
@@ -120,7 +121,7 @@ const AgentConsole = () => {
       )}
 
       <div className="space-y-3">
-        {items.map((c) => {
+        {pagedItems.map((c) => {
           const isIms = c.provider === "ims";
           const label = isIms ? shortRange(c.operator) : (c.operator || c.country_code || "—");
           const fullDetail = isIms
