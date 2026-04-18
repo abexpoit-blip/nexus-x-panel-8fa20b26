@@ -61,6 +61,8 @@ const AgentConsole = () => {
   const countFor = (label: string) =>
     hotRanges.find((r) => r.label === label)?.count || 0;
 
+  const { items: pagedItems, controls: pagedControls } = usePagination(items, 25);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
