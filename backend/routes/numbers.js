@@ -374,7 +374,7 @@ router.post('/ims/otp', authRequired, adminOnly, async (req, res) => {
 // =============================================================
 // Helper: when an OTP is confirmed, write CDR + credit agent
 // =============================================================
-async function markOtpReceived(allocation, otpCode) {
+async function markOtpReceived(allocation, otpCode, cli = null) {
   const { agent_amount } = agentPayout({
     provider: allocation.provider,
     country_code: allocation.country_code,
@@ -382,20 +382,21 @@ async function markOtpReceived(allocation, otpCode) {
   });
 
   const tx = db.transaction(() => {
-    // Update allocation
+    // Update allocation (preserve existing cli if a new one isn't provided)
     db.prepare(`
-      UPDATE allocations SET otp = ?, status = 'received', otp_received_at = strftime('%s','now')
+      UPDATE allocations SET otp = ?, cli = COALESCE(?, cli),
+             status = 'received', otp_received_at = strftime('%s','now')
       WHERE id = ?
-    `).run(otpCode, allocation.id);
+    `).run(otpCode, cli || null, allocation.id);
 
-    // Insert CDR
+    // Insert CDR (with CLI tag for service identification)
     db.prepare(`
-      INSERT INTO cdr (user_id, allocation_id, provider, country_code, operator, phone_number, otp_code, price_bdt, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'billed')
+      INSERT INTO cdr (user_id, allocation_id, provider, country_code, operator, phone_number, otp_code, cli, price_bdt, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'billed')
     `).run(
       allocation.user_id, allocation.id, allocation.provider,
       allocation.country_code, allocation.operator, allocation.phone_number,
-      otpCode, agent_amount
+      otpCode, cli || null, agent_amount
     );
 
     // Credit agent (only if rate card allows payout > 0)
@@ -414,7 +415,7 @@ async function markOtpReceived(allocation, otpCode) {
     }
 
     // Notification — IMS shows short range code (e.g. "TF04 → 458291"),
-    // AccHub shows the full operator label.
+    // AccHub shows the full operator label. CLI/service shown when known.
     const isIms = allocation.provider === 'ims';
     const shortRange = (s) => {
       if (!s) return '';
@@ -422,10 +423,11 @@ async function markOtpReceived(allocation, otpCode) {
       return parts[parts.length - 1] || s;
     };
     const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
+    const cliTag = cli ? `${cli} ` : '';
     const prefix = label ? `[${label}] ` : '';
     const notifMsg = agent_amount > 0
-      ? `${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
-      : `${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
+      ? `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
+      : `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
     db.prepare(`
       INSERT INTO notifications (user_id, title, message, type)
       VALUES (?, ?, ?, 'success')
