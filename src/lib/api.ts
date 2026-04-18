@@ -428,6 +428,14 @@ export const api = {
       request<{ ok: boolean; interval_sec: number }>("/admin/ims-otp-interval", {
         method: "PUT", body: JSON.stringify({ interval_sec }),
       }),
+    otpExpiry: () => request<{
+      expiry_sec: number; expiry_min: number; source: string;
+      min: number; max: number; options_min: number[];
+    }>("/admin/otp-expiry"),
+    otpExpirySave: (expiry_min: number) =>
+      request<{ ok: boolean; expiry_sec: number; expiry_min: number }>("/admin/otp-expiry", {
+        method: "PUT", body: JSON.stringify({ expiry_min }),
+      }),
     providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
     acchubCredentials: () => request<{
       base_url: string; username: string;

@@ -628,4 +628,48 @@ router.post('/acchub-test', async (req, res) => {
   }
 });
 
+// =============================================================
+// OTP expiry window (5-30 min) — controls how long an allocated number stays
+// "active" before it's auto-expired. Used by:
+//   • otpPoller cleanup cron (releases stale numbers)
+//   • numbers.js /get (recent-window for upstream polling)
+//   • agent UI countdown timer (read via /api/numbers/config)
+// =============================================================
+const { getOtpExpirySec, OTP_EXPIRY_MIN, OTP_EXPIRY_MAX, OTP_EXPIRY_KEY } = require('../lib/settings');
+
+router.get('/otp-expiry', (req, res) => {
+  const stored = +(db.prepare('SELECT value FROM settings WHERE key = ?').get(OTP_EXPIRY_KEY)?.value || 0);
+  const effective = getOtpExpirySec();
+  res.json({
+    expiry_sec: effective,
+    expiry_min: Math.round(effective / 60),
+    source: stored > 0 ? 'database' : 'default',
+    min: OTP_EXPIRY_MIN,
+    max: OTP_EXPIRY_MAX,
+    options_min: [5, 8, 10, 15, 20, 30],
+  });
+});
+
+router.put('/otp-expiry', (req, res) => {
+  try {
+    let sec = +(req.body?.expiry_sec);
+    if (!Number.isFinite(sec) || sec <= 0) {
+      const min = +(req.body?.expiry_min);
+      if (Number.isFinite(min) && min > 0) sec = min * 60;
+    }
+    if (!Number.isFinite(sec) || sec < OTP_EXPIRY_MIN || sec > OTP_EXPIRY_MAX) {
+      return res.status(400).json({ error: `expiry_sec must be between ${OTP_EXPIRY_MIN} and ${OTP_EXPIRY_MAX} seconds (5-30 min)` });
+    }
+    sec = Math.floor(sec);
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `).run(OTP_EXPIRY_KEY, String(sec));
+    logFromReq(req, 'otp_expiry_updated', { meta: { expiry_sec: sec } });
+    res.json({ ok: true, expiry_sec: sec, expiry_min: Math.round(sec / 60) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
