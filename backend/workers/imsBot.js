@@ -571,6 +571,20 @@ async function tick() {
   }
 }
 
+// Cache of last scraped OTPs — used by getRecentOtpFor() so the IMS provider
+// can detect "this number was already used recently" before assigning to an agent.
+// Map: phone_number → { otp_code, date_ts, sms_text, cachedAt (unix sec) }
+const recentOtpCache = new Map();
+const RECENT_OTP_TTL = 30 * 60; // 30 minutes
+
+function getRecentOtpFor(phone) {
+  const e = recentOtpCache.get(phone);
+  if (!e) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (now - e.cachedAt > RECENT_OTP_TTL) { recentOtpCache.delete(phone); return null; }
+  return e;
+}
+
 // Helper: pull OTPs once and credit any matching active allocations.
 // Used by tick() AND by the lightweight `pollOtpsNow()` fast-poll loop.
 async function deliverOtps() {
@@ -578,25 +592,41 @@ async function deliverOtps() {
   if (!otpsRaw.length) return 0;
   const seenPhones = new Set();
   const otps = [];
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const o of otpsRaw) {
+    // Populate the recent-OTP cache so pre-allocation check can see "this number was used".
+    // Always update with the LATEST OTP for each phone (otpsRaw is newest-first per scrapeOtps).
+    if (!recentOtpCache.has(o.phone_number)) {
+      recentOtpCache.set(o.phone_number, {
+        otp_code: o.otp_code,
+        date_ts: o.date_ts || nowSec,
+        sms_text: o.sms_text,
+        cachedAt: nowSec,
+      });
+    }
     if (seenPhones.has(o.phone_number)) continue;
     seenPhones.add(o.phone_number);
     otps.push(o);
   }
   let delivered = 0;
   for (const o of otps) {
-    // Match the most recent ACTIVE allocation for this phone.
-    // No date/timestamp filtering — as long as the agent's allocation is still
-    // 'active' (i.e. within the 8-min expiry window enforced by otpPoller's
-    // cleanup cron), ANY OTP that IMS shows for this number must be credited.
-    // Stale-allocation protection comes from status='active' alone:
-    // expired allocations are flipped to 'expired' and won't match here.
+    // Match the most recent ACTIVE allocation for this phone — but ONLY if the OTP
+    // arrived AFTER the agent allocated the number. Without this, agents would receive
+    // stale OTPs from previous users of the same recycled number.
+    // Grace: 60s before allocation (clock skew + IMS slight delays).
     const a = db.prepare(`
       SELECT * FROM allocations
       WHERE provider='ims' AND phone_number=? AND status='active' AND otp IS NULL
       ORDER BY allocated_at DESC LIMIT 1
     `).get(o.phone_number);
     if (a) {
+      const allocAt = +a.allocated_at || 0;
+      // o.date_ts may be 0 if IMS didn't return a parseable date — accept in that case.
+      if (o.date_ts && allocAt && o.date_ts < (allocAt - 60)) {
+        // OTP is older than the allocation — this is a stale OTP from a previous user.
+        // Skip it (don't mark a fresh allocation with old data).
+        continue;
+      }
       await markOtpReceived(a, o.otp_code);
       status.otpsDeliveredTotal++;
       delivered++;
@@ -884,5 +914,5 @@ async function syncLive() {
   }
 }
 
-module.exports = { start, stop, restart, tick, scrapeNow, syncLive, solveCaptchaText, getStatus, logEvent };
+module.exports = { start, stop, restart, tick, scrapeNow, syncLive, solveCaptchaText, getStatus, logEvent, getRecentOtpFor };
 
