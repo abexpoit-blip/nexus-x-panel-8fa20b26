@@ -57,7 +57,8 @@ let consecFail = 0;
 let loggedIn = false;
 let emptyStreak = 0;        // consecutive scrapes returning 0 numbers
 let scrapeTimer = null;     // for graceful stop
-let otpTimer = null;        // fast OTP-only poll loop
+let otpTimer = null;        // fast OTP-only poll loop (now setTimeout-based, adaptive)
+let _scheduledStop = false; // signals adaptive _scheduleNextPoll() chain to stop
 const EMPTY_LIMIT = +(process.env.IMS_EMPTY_LIMIT || 10);
 let lastLowPoolAlertAt = 0;   // unix seconds — debounce low-pool notifications
 let _cookieFailStreak = 0;    // consecutive cookie-auth failures (resets on success)
@@ -93,12 +94,24 @@ function logEvent(level, message, meta) {
 function getStatus() {
   try {
     const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='pool'").get().c;
+    const claimingSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active'").get().c;
     const otpReceived = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='received'").get().c;
     const hasCookies = !!readSetting('ims_cookies');
-    return { ...status, poolSize, activeAssigned, otpReceived, emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(), cookieFailStreak: _cookieFailStreak, hasCookies };
+    return {
+      ...status, poolSize, claimingSize, activeAssigned, otpReceived,
+      emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
+      cookieFailStreak: _cookieFailStreak, hasCookies,
+      maxRowsScraped: _maxRowsSeen,
+      otpCacheSize: recentOtpCache.size,
+    };
   } catch (_) {
-    return { ...status, poolSize: 0, activeAssigned: 0, otpReceived: 0, emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(), cookieFailStreak: _cookieFailStreak, hasCookies: false };
+    return {
+      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+      emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
+      cookieFailStreak: _cookieFailStreak, hasCookies: false,
+      maxRowsScraped: _maxRowsSeen, otpCacheSize: 0,
+    };
   }
 }
 
@@ -564,7 +577,9 @@ async function scrapeNumbers() {
 // IMS auto-loads the CDR table on page load (no "Show Report" click needed).
 let _cdrPageReady = false;
 let _lastShowReportAt = 0;     // wall-clock ms of last successful Show Report click — used to enforce IMS's 15s minimum interval
+let _lastPageSizeCheckAt = 0;  // wall-clock ms of last page-size verification (re-bump if IMS reset to default)
 let _scrapeInFlight = null;    // Promise mutex — prevents parallel scrapeOtps() calls (was causing 90s overlap + race conditions)
+let _maxRowsSeen = 0;          // peak row count from any single scrape — used by status/burst metrics
 
 async function scrapeOtps() {
   // Mutex: if a scrape is already running, return the SAME promise instead
@@ -598,19 +613,38 @@ async function scrapeOtps() {
     try {
       // Wait for the DataTable wrapper itself — confirms AJAX layer is ready
       await page.waitForSelector('table tbody, .dataTables_wrapper', { timeout: 10000 });
-      const sized = await page.evaluate(() => {
+      // Aggressively try to bump page size to maximum so a single scrape covers
+      // 100s of OTPs (critical for burst load — 100+ agents requesting at once).
+      // Returns: { ok, picked, options, currentRows } for diagnostics.
+      const sizeResult = await page.evaluate(() => {
         const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
-        if (!sel) return false;
-        const opts = Array.from(sel.options || []);
-        const all = opts.find(o => /^all$/i.test(o.text) || o.value === '-1');
-        const big = opts.find(o => +o.value === 500) || opts.find(o => +o.value === 100);
-        const pick = all || big;
-        if (!pick) return false;
+        if (!sel) return { ok: false, reason: 'no length selector found' };
+        const opts = Array.from(sel.options || []).map(o => ({ text: o.text, value: o.value }));
+        // Preference order: "All" → 1000 → 500 → 250 → 100 → highest numeric
+        const findOpt = (pred) => Array.from(sel.options || []).find(pred);
+        let pick = findOpt(o => /^all$/i.test(o.text) || o.value === '-1')
+                || findOpt(o => +o.value === 1000)
+                || findOpt(o => +o.value === 500)
+                || findOpt(o => +o.value === 250)
+                || findOpt(o => +o.value === 100);
+        if (!pick) {
+          // No preferred option — pick the highest numeric value available
+          const nums = Array.from(sel.options || [])
+            .map(o => ({ opt: o, n: +o.value }))
+            .filter(x => Number.isFinite(x.n) && x.n > 0)
+            .sort((a, b) => b.n - a.n);
+          if (nums.length) pick = nums[0].opt;
+        }
+        if (!pick) return { ok: false, reason: 'no usable option', options: opts };
         sel.value = pick.value;
         sel.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
+        return { ok: true, picked: { text: pick.text, value: pick.value }, options: opts, currentRows: document.querySelectorAll('table tbody tr').length };
       });
-      if (sized) _step('page-size bumped to All/500');
+      if (sizeResult.ok) {
+        _step(`page-size set to "${sizeResult.picked.text}" (value=${sizeResult.picked.value}, ${sizeResult.options.length} options)`);
+      } else {
+        _step(`page-size NOT set: ${sizeResult.reason} ${sizeResult.options ? '— available: ' + JSON.stringify(sizeResult.options) : ''}`);
+      }
       await page.evaluate(() => {
         const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
         const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
@@ -632,6 +666,35 @@ async function scrapeOtps() {
       _step(`skip show-report click — only ${sinceLast}ms since last (IMS 15s rule)`);
       // No click, no wait — just fall through to extract current table rows
     } else {
+      // Periodically (every 5 min) re-verify page size — IMS DataTables can
+      // reset to default 25 on session refresh, silently capping our scrape.
+      if (Date.now() - _lastPageSizeCheckAt > 5 * 60 * 1000) {
+        try {
+          const r = await page.evaluate(() => {
+            const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
+            if (!sel) return { ok: false };
+            const cur = +sel.value;
+            // If currently small, bump back up
+            if (cur > 0 && cur < 100) {
+              const opts = Array.from(sel.options || []);
+              const pick = opts.find(o => /^all$/i.test(o.text) || o.value === '-1')
+                        || opts.find(o => +o.value === 1000)
+                        || opts.find(o => +o.value === 500)
+                        || opts.find(o => +o.value === 100);
+              if (pick) {
+                sel.value = pick.value;
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                return { ok: true, was: cur, now: pick.value, text: pick.text };
+              }
+            }
+            return { ok: true, was: cur, unchanged: true };
+          });
+          _lastPageSizeCheckAt = Date.now();
+          if (r && r.ok && !r.unchanged) {
+            _step(`page-size re-bumped from ${r.was} → "${r.text}" (was reset by IMS)`);
+          }
+        } catch (_) { /* non-fatal */ }
+      }
       try {
         // Race the click against a 20s hard timeout so a stuck CDP call doesn't
         // burn through the full protocolTimeout (180s) before we fall back.
@@ -651,6 +714,7 @@ async function scrapeOtps() {
           await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
           if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
           _lastShowReportAt = Date.now();
+          _cdrPageReady = false; // force page-size re-init on next scrape
         } catch (_) { /* keep going — populated check will catch it */ }
       }
     }
@@ -776,7 +840,9 @@ async function scrapeOtps() {
     });
     return out;
   });
-    _step(`done — extracted ${out.length} rows`);
+    if (out.length > _maxRowsSeen) _maxRowsSeen = out.length;
+    const uniquePhones = new Set(out.map(r => r.phone_number)).size;
+    _step(`done — extracted ${out.length} rows (${uniquePhones} unique phones, peak=${_maxRowsSeen})`);
     return out;
   })();
   try {
@@ -865,44 +931,91 @@ async function tick() {
 }
 
 // Cache of last scraped OTPs — used by getRecentOtpFor() so the IMS provider
-// can detect "this number was already used recently" before assigning to an agent.
-// Map: phone_number → { otp_code, date_ts, sms_text, cachedAt (unix sec) }
+// can detect "this number was already used recently" before assigning to an agent,
+// AND used by deliverOtps() to backfill OTPs that arrived before/just-after allocation.
+//
+// BURST-SAFE: stores up to 5 OTPs per phone (newest first). Critical for the
+// scenario where a single phone receives multiple OTPs in rapid succession
+// (e.g. resends, multiple service signups). Old single-entry cache would
+// overwrite earlier OTPs and lose them.
+//
+// Map: phone_number → Array<{ otp_code, date_ts, sms_text, cli, cachedAt }>
 const recentOtpCache = new Map();
 const RECENT_OTP_TTL = 30 * 60; // 30 minutes
+const MAX_OTPS_PER_PHONE = 5;
 
-function getRecentOtpFor(phone) {
-  const e = recentOtpCache.get(phone);
-  if (!e) return null;
+function _pruneOldEntries(arr) {
   const now = Math.floor(Date.now() / 1000);
-  if (now - e.cachedAt > RECENT_OTP_TTL) { recentOtpCache.delete(phone); return null; }
-  return e;
+  return arr.filter(e => now - e.cachedAt <= RECENT_OTP_TTL);
+}
+
+// Returns the LATEST cached OTP for this phone (used by IMS provider to
+// detect "already used" numbers before assigning).
+function getRecentOtpFor(phone) {
+  const arr = recentOtpCache.get(phone);
+  if (!arr || !arr.length) return null;
+  const fresh = _pruneOldEntries(arr);
+  if (!fresh.length) { recentOtpCache.delete(phone); return null; }
+  if (fresh.length !== arr.length) recentOtpCache.set(phone, fresh);
+  return fresh[0]; // newest first
+}
+
+// Add (or refresh) an OTP entry for a phone. Newest goes to front. Dedupe by
+// (otp_code, date_ts) so re-scrapes don't grow the array unnecessarily.
+function _addToCache(phone, entry) {
+  const existing = recentOtpCache.get(phone) || [];
+  // Dedupe: same OTP code with same/very-close timestamp = same SMS, skip.
+  const dup = existing.find(e =>
+    e.otp_code === entry.otp_code &&
+    Math.abs((e.date_ts || 0) - (entry.date_ts || 0)) < 5
+  );
+  if (dup) {
+    // Just refresh cachedAt so TTL eviction doesn't drop it
+    dup.cachedAt = entry.cachedAt;
+    return;
+  }
+  existing.unshift(entry);
+  // Keep only the newest MAX_OTPS_PER_PHONE entries
+  if (existing.length > MAX_OTPS_PER_PHONE) existing.length = MAX_OTPS_PER_PHONE;
+  recentOtpCache.set(phone, existing);
+}
+
+// Pick the best OTP to deliver for a given allocation. Strategy:
+//   1) Prefer OTPs that arrived AFTER allocated_at (these are definitely for this agent)
+//      — among those, pick the EARLIEST (first SMS post-allocation = the one they're waiting for).
+//   2) Otherwise fall back to the newest cached OTP (covers pre-existing OTP backfill case).
+function _pickBestOtpFor(allocation) {
+  const arr = recentOtpCache.get(allocation.phone_number);
+  if (!arr || !arr.length) return null;
+  const fresh = _pruneOldEntries(arr);
+  if (!fresh.length) return null;
+  const allocAt = +allocation.allocated_at || 0;
+  // Candidates that arrived after allocation (with 10s grace for clock skew)
+  const postAlloc = fresh
+    .filter(e => e.date_ts && e.date_ts >= (allocAt - 10))
+    .sort((a, b) => a.date_ts - b.date_ts); // earliest first
+  if (postAlloc.length) return postAlloc[0];
+  return fresh[0]; // newest pre-existing
 }
 
 // Helper: pull OTPs once and credit any matching active allocations.
 // Used by tick() AND by the lightweight `pollOtpsNow()` fast-poll loop.
-//
-// Backfill behaviour: on every scrape we (a) update the recentOtpCache with
-// the LATEST OTP per phone seen, then (b) for EVERY active+otp-pending
-// allocation we look up its phone in the cache and deliver if found.
-// This means historical OTPs already on the IMS panel are picked up the next
-// scrape after a number is assigned — no need to wait for a brand-new SMS.
 async function deliverOtps() {
   const otpsRaw = await scrapeOtps().catch((e) => { dwarn('[ims-bot] scrapeOtps:', e.message); return []; });
   const nowSec = Math.floor(Date.now() / 1000);
   // Debug: list scraped phones + how many active allocations are awaiting OTP
+  let pendingCount = 0;
   try {
     const phones = otpsRaw.slice(0, 5).map(o => `${o.phone_number}=${o.otp_code}`).join(',');
-    const pendingCount = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active' AND otp IS NULL").get().c;
+    pendingCount = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active' AND otp IS NULL").get().c;
     console.log(`[ims-bot][deliver] scraped=${otpsRaw.length} top5=[${phones}] pendingAlloc=${pendingCount}`);
   } catch (_) {}
-  // (a) Refresh cache. otpsRaw is newest-first per scrapeOtps(); the FIRST
-  // entry per phone is the most recent SMS, so we always overwrite older
-  // cache entries with the freshest OTP.
-  const seenInThisScrape = new Set();
+  status.pendingAlloc = pendingCount;
+
+  // (a) Refresh cache. otpsRaw is newest-first per scrapeOtps(); add ALL entries
+  // (not just first per phone) so multi-OTP bursts on the same phone are preserved.
   for (const o of otpsRaw) {
-    if (seenInThisScrape.has(o.phone_number)) continue;
-    seenInThisScrape.add(o.phone_number);
-    recentOtpCache.set(o.phone_number, {
+    _addToCache(o.phone_number, {
       otp_code: o.otp_code,
       date_ts: o.date_ts || nowSec,
       sms_text: o.sms_text,
@@ -911,8 +1024,7 @@ async function deliverOtps() {
     });
   }
   // (b) Backfill: walk EVERY active IMS allocation that still has otp=NULL
-  // and try to match against the cache. Covers both fresh OTPs from this
-  // scrape AND historical OTPs scraped earlier.
+  // and try to match using best-fit selection (prefers post-allocation OTPs).
   let delivered = 0;
   let pending = [];
   try {
@@ -923,13 +1035,11 @@ async function deliverOtps() {
     `).all();
   } catch (_) { pending = []; }
   for (const a of pending) {
-    const cached = recentOtpCache.get(a.phone_number);
+    const cached = _pickBestOtpFor(a);
     if (!cached) continue;
     const allocAt = +a.allocated_at || 0;
-    // Stale-OTP guard: if the cached OTP arrived BEFORE allocation, it MIGHT
-    // be from a previous user — but only skip if this exact (number, otp)
-    // was already delivered to another allocation. Otherwise deliver it
-    // (covers numbers freshly added to pool that already have pending IMS history).
+    // Stale-OTP guard: if the picked OTP arrived BEFORE allocation, only deliver
+    // if this exact (number, otp) wasn't already delivered to someone else.
     if (cached.date_ts && allocAt && cached.date_ts < (allocAt - 60)) {
       const dup = db.prepare(`
         SELECT 1 FROM allocations
@@ -992,6 +1102,13 @@ function start() {
   }
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
   if (otpTimer) { clearInterval(otpTimer); otpTimer = null; }
+  // Recovery: any 'claiming' rows from a crashed/restarted bulk allocation
+  // should be returned to 'pool' so they can be assigned again. Safe because
+  // legitimate claims flip to 'active' inside the same transaction in routes/numbers.js.
+  try {
+    const r = db.prepare("UPDATE allocations SET status='pool' WHERE provider='ims' AND status='claiming'").run();
+    if (r.changes) console.log(`[ims-bot] recovered ${r.changes} 'claiming' allocations → 'pool'`);
+  } catch (_) {}
   status.running = true;
   emptyStreak = 0;
   console.log(`✓ IMS bot starting (heavy tick every ${INTERVAL}s for keepalive, headless=${HEADLESS}, base=${BASE_URL})`);
@@ -1018,22 +1135,45 @@ function start() {
     }
   }, INTERVAL * 1000);
 
-  // FAST OTP loop — every OTP_INTERVAL seconds (default 10s) we ONLY scrape the
-  // OTP/CDR page (no number list, no pagination). This is what makes assigned
-  // numbers receive their OTP within ~10s of arrival, even though the heavy
-  // number-list scrape only runs every 60s.
-  // Priority: DB setting (admin-tunable) > env var > default 10s. Clamp 3-120s.
+  // FAST OTP loop — adaptive interval based on burst load.
+  //   • idle (0 pending allocations)        → IDLE_INTERVAL    (gentler on IMS)
+  //   • light (1-9 pending)                  → BASE_INTERVAL    (admin-tuned default)
+  //   • burst (10+ pending, "100-300 OTP")   → BURST_INTERVAL   (IMS minimum + 3s safety)
+  //
+  // IMS enforces "minimum 15s between CDR refreshes" — going below triggers a
+  // warning page instead of data and risks an account ban. Hard floor: 18s.
   const dbOtpInt = +(readSetting('ims_otp_interval') || 0);
   const envOtpInt = +(process.env.IMS_OTP_INTERVAL || 20);
-  let OTP_INTERVAL = dbOtpInt > 0 ? dbOtpInt : envOtpInt;
-  // IMS enforces "minimum 15s between CDR refreshes" — going below triggers a
-  // warning page ("attempt is logged") instead of data, and risks account ban.
-  // Hard floor is 18s to give a 3s safety buffer against IMS clock skew.
-  if (OTP_INTERVAL < 18) OTP_INTERVAL = 18;
-  if (OTP_INTERVAL > 120) OTP_INTERVAL = 120;
-  status.otpIntervalSec = OTP_INTERVAL;
-  console.log(`✓ IMS fast-OTP poll every ${OTP_INTERVAL}s`);
-  otpTimer = setInterval(pollOtpsNow, OTP_INTERVAL * 1000);
+  let BASE_INTERVAL = dbOtpInt > 0 ? dbOtpInt : envOtpInt;
+  if (BASE_INTERVAL < 18) BASE_INTERVAL = 18;
+  if (BASE_INTERVAL > 120) BASE_INTERVAL = 120;
+  const BURST_INTERVAL = 18;                          // IMS floor + 3s safety
+  const IDLE_INTERVAL = Math.max(BASE_INTERVAL, 30);  // slow down when nothing's pending
+  status.otpIntervalSec = BASE_INTERVAL;
+  status.otpIntervalBurstSec = BURST_INTERVAL;
+  status.otpIntervalIdleSec = IDLE_INTERVAL;
+  console.log(`✓ IMS fast-OTP poll: base=${BASE_INTERVAL}s, burst=${BURST_INTERVAL}s, idle=${IDLE_INTERVAL}s (adaptive)`);
+
+  // Adaptive scheduler — recomputes next delay after each tick based on burst state.
+  _scheduledStop = false;
+  function _scheduleNextPoll() {
+    if (_scheduledStop) return;
+    let nextDelay = BASE_INTERVAL;
+    let mode = 'base';
+    try {
+      const pending = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active' AND otp IS NULL").get().c;
+      status.pendingAlloc = pending;
+      if (pending === 0) { nextDelay = IDLE_INTERVAL; mode = 'idle'; }
+      else if (pending >= 10) { nextDelay = BURST_INTERVAL; mode = 'burst'; }
+      else { nextDelay = BASE_INTERVAL; mode = 'base'; }
+      status.otpScheduleMode = mode;
+      status.otpNextPollIn = nextDelay;
+    } catch (_) { /* fall through with base */ }
+    otpTimer = setTimeout(async () => {
+      try { await pollOtpsNow(); } finally { _scheduleNextPoll(); }
+    }, nextDelay * 1000);
+  }
+  _scheduleNextPoll();
 }
 
 // Lightweight OTP-only poll — runs frequently between heavy ticks.
@@ -1132,8 +1272,9 @@ async function pollOtpsNow() {
 }
 
 async function stop() {
+  _scheduledStop = true; // halt the adaptive setTimeout chain
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
-  if (otpTimer) { clearInterval(otpTimer); otpTimer = null; }
+  if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; } // setTimeout now, not setInterval
   try { await browser?.close(); } catch (_) {}
   browser = null; page = null; loggedIn = false; _cdrPageReady = false;
   status.running = false;
