@@ -194,7 +194,7 @@ const AgentHistory = () => {
             className="bg-neon-green/10 border-neon-green/30 text-neon-green hover:bg-neon-green/20 hover:text-neon-green"
           >
             <Download className={cn("w-3.5 h-3.5 mr-2", exporting && "animate-pulse")} />
-            {exporting ? "Exporting…" : "Export CSV"}
+            {exporting ? "Exporting…" : "Download .txt"}
           </Button>
         </div>
       </GlassCard>
