@@ -633,11 +633,16 @@ async function scrapeOtps() {
       // No click, no wait — just fall through to extract current table rows
     } else {
       try {
-        await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
-          const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
-          if (showBtn) showBtn.click();
-        });
+        // Race the click against a 20s hard timeout so a stuck CDP call doesn't
+        // burn through the full protocolTimeout (180s) before we fall back.
+        await Promise.race([
+          page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
+            const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
+            if (showBtn) showBtn.click();
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('show-report click timeout 20s')), 20000)),
+        ]);
         _lastShowReportAt = Date.now();
         _step('show-report re-click done');
       } catch (e) {
