@@ -110,15 +110,32 @@ async function restart() {
 
 async function ensureBrowser() {
   if (browser && page) return;
-  const puppeteer = require('puppeteer');
+  // Use puppeteer-extra + stealth plugin to bypass Cloudflare bot detection.
+  // Falls back to plain puppeteer if the plugin packages aren't installed yet.
+  let puppeteer;
+  try {
+    puppeteer = require('puppeteer-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+    puppeteer.use(StealthPlugin());
+  } catch (_) {
+    puppeteer = require('puppeteer');
+  }
   browser = await puppeteer.launch({
     headless: HEADLESS ? 'new' : false,
     executablePath: CHROME_PATH,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled',
+      '--lang=en-US,en',
+    ],
   });
   page = await browser.newPage();
   await page.setViewport({ width: 1366, height: 900 });
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 NexusXBot/1.0');
+  // Real Chrome UA — Cloudflare blocks anything containing "Bot", "Headless", or unusual UAs
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+  await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
   loggedIn = false;
 }
 
