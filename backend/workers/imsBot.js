@@ -352,11 +352,22 @@ async function scrapeOtps() {
       // RANGE: a short alphabetic cell that's not the SMS body (e.g. "Peru Bitel TF04")
       const range = cells.find(t => /[A-Za-z]/.test(t) && t.length < 40 && t !== phone && !/^\d{4}-\d{2}-\d{2}/.test(t));
 
-      // SMS body = the longest cell containing letters/text (excluding date/phone/range)
+      // SMS body = the longest cell containing letters/text (excluding date/phone/range).
+      // Script ranges covered: Latin, Arabic, Bengali, Myanmar, Cyrillic, Devanagari,
+      // Hebrew, CJK, Thai, Greek — covers virtually every IMS country.
+      const LETTER_RE = /[A-Za-z\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u0370-\u03FF\u1000-\u109F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]/;
       let sms = '';
       for (const c of cells) {
         if (c === phone || c === dateCell || c === range) continue;
-        if (/[A-Za-z\u0980-\u09FF\u1000-\u109F]/.test(c) && c.length > sms.length) sms = c;
+        if (LETTER_RE.test(c) && c.length > sms.length) sms = c;
+      }
+      // Fallback: if no letter-containing cell found, use the longest non-key cell
+      // that contains a 4-8 digit run (covers numeric-only SMS bodies).
+      if (!sms) {
+        for (const c of cells) {
+          if (c === phone || c === dateCell || c === range) continue;
+          if (/\d{4,8}/.test(c) && c.length > sms.length && c.length < 500) sms = c;
+        }
       }
       // OTP = first standalone 4-8 digit number found in the SMS text
       const m = sms.match(/(?:^|[^\d])(\d{4,8})(?:[^\d]|$)/);
