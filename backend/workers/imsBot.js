@@ -500,20 +500,8 @@ async function tick() {
     //   • Pool is refilled via admin "Manual Paste" or the explicit "Sync Live" button
     await deliverOtps();
     const nums = []; // numbers scrape disabled — see above. Set empty so auto-pause logic works.
-    if (nums.length === 0) {
-      emptyStreak++;
-      if (emptyStreak >= EMPTY_LIMIT) {
-        const msg = `IMS bot auto-paused: ${EMPTY_LIMIT} consecutive empty scrapes`;
-        console.warn(`[ims-bot] ${msg}`);
-        logEvent('warn', msg);
-        notifyAdmins('IMS Bot Auto-Paused', `No numbers found in last ${EMPTY_LIMIT} scrapes. Bot stopped to save resources. Click Start when IMS has stock.`, 'warning');
-        await stop();
-        emptyStreak = 0;
-        return;
-      }
-    } else {
-      emptyStreak = 0;
-    }
+    // Auto-pause disabled — numbers scrape removed, so empty-streak no longer applies.
+    emptyStreak = 0;
 
     consecFail = 0;
     status.consecFail = 0;
