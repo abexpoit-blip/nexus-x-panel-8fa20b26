@@ -148,7 +148,7 @@ async function ensureBrowser() {
     // "Runtime.callFunctionOn timed out" + Target closed crashes. Show-Report
     // click itself is wrapped in a 20s race below, so this only protects against
     // truly catastrophic upstream stalls.
-    protocolTimeout: 180000,
+    protocolTimeout: 240000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
