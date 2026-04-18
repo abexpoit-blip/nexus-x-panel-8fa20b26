@@ -42,9 +42,12 @@ module.exports = {
   },
 
   // Pull next available number from manual IMS pool (FIFO).
-  // Accepts: { range } — exact match against the operator column, OR
-  //          { countryCode, operator } for legacy callers.
+  // SKIPS numbers that have a recent OTP in IMS (already used by previous user) —
+  // automatically deletes them from pool and tries the next one. Up to 20 attempts.
   async getNumber({ range, countryCode, operator } = {}) {
+    let imsBot = null;
+    try { imsBot = require('../workers/imsBot'); } catch (_) {}
+
     let q = "SELECT * FROM allocations WHERE provider = 'ims' AND status = 'pool'";
     const params = [];
     if (range) { q += ' AND COALESCE(operator, \'Unknown\') = ?'; params.push(range); }
@@ -53,12 +56,32 @@ module.exports = {
       if (operator) { q += ' AND operator = ?'; params.push(operator); }
     }
     q += ' ORDER BY allocated_at ASC LIMIT 1';
-    const row = db.prepare(q).get(...params);
+    const sel = db.prepare(q);
+    const del = db.prepare("DELETE FROM allocations WHERE id = ?");
+
+    let row = null;
+    let skipped = 0;
+    for (let i = 0; i < 20; i++) {
+      const candidate = sel.get(...params);
+      if (!candidate) break;
+      // Check if this number was used recently (last 30min) per IMS scrape cache
+      const recent = imsBot?.getRecentOtpFor?.(candidate.phone_number);
+      if (recent) {
+        // Already used — burn this row and try next
+        del.run(candidate.id);
+        skipped++;
+        continue;
+      }
+      row = candidate;
+      break;
+    }
+
     if (!row) {
       throw new Error(range
-        ? `Range "${range}" is empty — admin needs to refill`
-        : 'No IMS numbers available — ask admin to add more');
+        ? `Range "${range}" has no fresh numbers (skipped ${skipped} already-used) — admin needs to refill`
+        : 'No fresh IMS numbers available — ask admin to add more');
     }
+    if (skipped > 0) console.log(`[ims-provider] skipped ${skipped} stale number(s) before assigning ${row.phone_number}`);
     return {
       provider_ref: String(row.id),
       phone_number: row.phone_number,
