@@ -384,6 +384,29 @@ router.post('/ims-sync-live', async (req, res) => {
   }
 });
 
+// POST /api/admin/ims-scrape-numbers — start a BACKGROUND numbers/ranges scrape.
+// Returns immediately with a job ID. Frontend polls /ims-numbers-job for progress.
+router.post('/ims-scrape-numbers', (req, res) => {
+  try {
+    const { startNumbersScrapeBackground } = require('../workers/imsBot');
+    const result = startNumbersScrapeBackground();
+    logFromReq(req, 'ims_scrape_numbers_start', { meta: result });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/ims-numbers-job — poll status of the background numbers scrape.
+router.get('/ims-numbers-job', (req, res) => {
+  try {
+    const { getNumbersJobStatus } = require('../workers/imsBot');
+    res.json(getNumbersJobStatus());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/admin/ims-pool-breakdown — pool size grouped by range (operator)
 router.get('/ims-pool-breakdown', (req, res) => {
   const ranges = db.prepare(`
