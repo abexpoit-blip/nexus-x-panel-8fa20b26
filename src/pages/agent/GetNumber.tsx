@@ -167,7 +167,8 @@ const AgentGetNumber = () => {
           : { country_id: Number(countryId), operator_id: Number(operatorId) }),
         count: quantity,
       });
-      setNumbers((prev) => [...allocated.map((a: AllocatedNumber) => ({ ...a, status: "active" as const })), ...prev]);
+      const nowSec = Math.floor(Date.now() / 1000);
+      setNumbers((prev) => [...allocated.map((a: AllocatedNumber) => ({ ...a, status: "active" as const, allocated_at: a.allocated_at ?? nowSec })), ...prev]);
       setPage(1);
       if (allocated.length) toast({ title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated!`, description: allocated[0].phone_number });
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
