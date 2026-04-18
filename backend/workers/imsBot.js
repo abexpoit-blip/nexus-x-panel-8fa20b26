@@ -613,23 +613,31 @@ async function scrapeOtps() {
     _cdrPageReady = true;
     _step('first-visit prep done');
   } else {
-    // Subsequent polls: just RE-CLICK "Show Report" — it triggers a fresh AJAX
-    // query against IMS without a heavy full-page reload. Much faster than
-    // page.reload() and respects IMS's "15s minimum interval" rule (poll loop
-    // is now ≥18s so we never hit the rate limiter).
-    try {
-      await page.evaluate(() => {
-        const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
-        const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
-        if (showBtn) showBtn.click();
-      });
-      _step('show-report re-click done');
-    } catch (e) {
-      _step(`show-report click failed (${e.message}) — falling back to page reload`);
+    // Subsequent polls: enforce IMS's 15s minimum interval between Show Report
+    // clicks. If we clicked <15s ago, skip the click entirely and just read
+    // whatever data is currently rendered (it's still the freshest CDR data
+    // we got — agents waiting for OTPs will be served from cache anyway).
+    const sinceLast = Date.now() - _lastShowReportAt;
+    if (sinceLast < 16000) {
+      _step(`skip show-report click — only ${sinceLast}ms since last (IMS 15s rule)`);
+      // No click, no wait — just fall through to extract current table rows
+    } else {
       try {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
-        if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
-      } catch (_) { /* keep going — populated check will catch it */ }
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
+          const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
+          if (showBtn) showBtn.click();
+        });
+        _lastShowReportAt = Date.now();
+        _step('show-report re-click done');
+      } catch (e) {
+        _step(`show-report click failed (${e.message}) — falling back to page reload`);
+        try {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
+          if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
+          _lastShowReportAt = Date.now();
+        } catch (_) { /* keep going — populated check will catch it */ }
+      }
     }
   }
 
