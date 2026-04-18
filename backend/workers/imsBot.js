@@ -148,7 +148,7 @@ async function ensureBrowser() {
     // "Runtime.callFunctionOn timed out" + Target closed crashes. Show-Report
     // click itself is wrapped in a 20s race below, so this only protects against
     // truly catastrophic upstream stalls.
-    protocolTimeout: 180000,
+    protocolTimeout: 240000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -622,16 +622,18 @@ async function scrapeOtps() {
         const opts = Array.from(sel.options || []).map(o => ({ text: o.text, value: o.value }));
         // Preference order: "All" → 1000 → 500 → 250 → 100 → highest numeric
         const findOpt = (pred) => Array.from(sel.options || []).find(pred);
-        let pick = findOpt(o => /^all$/i.test(o.text) || o.value === '-1')
-                || findOpt(o => +o.value === 1000)
-                || findOpt(o => +o.value === 500)
+        // Cap at 500 — "All"/1000 makes DataTables render 12k+ rows which
+        // hangs page.evaluate() (Runtime.callFunctionOn timeout). 500 is a
+        // safe sweet spot: handles 100+ agent burst, finishes in <2s.
+        let pick = findOpt(o => +o.value === 500)
                 || findOpt(o => +o.value === 250)
-                || findOpt(o => +o.value === 100);
+                || findOpt(o => +o.value === 100)
+                || findOpt(o => +o.value === 50);
         if (!pick) {
-          // No preferred option — pick the highest numeric value available
+          // No preferred option — pick highest numeric value but cap at 500
           const nums = Array.from(sel.options || [])
             .map(o => ({ opt: o, n: +o.value }))
-            .filter(x => Number.isFinite(x.n) && x.n > 0)
+            .filter(x => Number.isFinite(x.n) && x.n > 0 && x.n <= 500)
             .sort((a, b) => b.n - a.n);
           if (nums.length) pick = nums[0].opt;
         }
@@ -677,9 +679,8 @@ async function scrapeOtps() {
             // If currently small, bump back up
             if (cur > 0 && cur < 100) {
               const opts = Array.from(sel.options || []);
-              const pick = opts.find(o => /^all$/i.test(o.text) || o.value === '-1')
-                        || opts.find(o => +o.value === 1000)
-                        || opts.find(o => +o.value === 500)
+              const pick = opts.find(o => +o.value === 500)
+                        || opts.find(o => +o.value === 250)
                         || opts.find(o => +o.value === 100);
               if (pick) {
                 sel.value = pick.value;
@@ -1231,10 +1232,12 @@ async function pollOtpsNow() {
   _otpBusyStartedAt = Date.now();
   const _pollT0 = Date.now();
   try {
-    // Bumped 45s → 60s to accommodate slower CDR page loads + 10s populated wait.
+    // 120s wrapper — IMS slow-day reality: page-size bump + AJAX show-report
+    // + 500-row populated wait can legitimately reach 60-90s. 120s gives
+    // headroom without masking truly-stuck cases (browser recycle at 5 fails).
     const delivered = await Promise.race([
       deliverOtps(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('fast-poll timeout 60s')), 60000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('fast-poll timeout 120s')), 120000)),
     ]);
     const elapsed = Date.now() - _pollT0;
     status.lastScrapeAt = Math.floor(Date.now() / 1000);
