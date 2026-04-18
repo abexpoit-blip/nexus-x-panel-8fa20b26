@@ -734,9 +734,22 @@ async function pollOtpsNow() {
     }
     return;
   }
-  if (!loggedIn || !page) {
+  // Auto re-login if session dropped — don't sit idle waiting for heavy tick.
+  if (!loggedIn && page) {
+    otpBusy = true;
+    _otpBusyStartedAt = Date.now();
+    try {
+      console.log('[ims-bot] fast-poll: session expired — re-logging in');
+      await login();
+      _cdrPageReady = false;
+    } catch (e) {
+      console.warn('[ims-bot] fast-poll re-login failed:', e.message);
+    } finally { otpBusy = false; }
+    return;
+  }
+  if (!page) {
     if ((_pollSkipLogCount++ % 6) === 0) {
-      console.log(`[ims-bot] fast-poll skipped — loggedIn=${loggedIn} page=${!!page}`);
+      console.log(`[ims-bot] fast-poll skipped — page not ready`);
     }
     return;
   }
