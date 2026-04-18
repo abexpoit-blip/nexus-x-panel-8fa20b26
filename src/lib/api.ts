@@ -325,14 +325,14 @@ export const api = {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `otp-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `otp-history-${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    // Approx row count from blob size is unreliable — return text length lines instead
+    // Each non-empty line is one Number|OTP record (no header row anymore)
     const text = await blob.text();
-    const lines = text.split("\n").filter(Boolean).length - 1; // minus header
+    const lines = text.split("\n").filter(Boolean).length;
     return { rows: Math.max(0, lines) };
   },
   releaseNumber: (id: number) => request(`/numbers/release/${id}`, { method: "POST" }),
