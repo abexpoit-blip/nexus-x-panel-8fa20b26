@@ -208,7 +208,7 @@ function demoRoute(path: string, opts: RequestInit): any {
   }
   if (path === "/numbers/my") return demoData.myNumbers();
   if (path === "/numbers/summary") return demoData.numberSummary();
-  if (path === "/otp/sync" && method === "POST") return demoData.syncOtp();
+  if (path === "/numbers/sync" && method === "POST") return demoData.syncOtp();
 
   if (path === "/notifications") return demoData.notifications();
   if (path.startsWith("/audit")) return demoData.audit();
