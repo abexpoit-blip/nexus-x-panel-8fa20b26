@@ -609,7 +609,7 @@ const RecentOtpWindowSetting = ({ onSaved }: { onSaved: () => void }) => {
   );
 };
 
-
+const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
   const [open, setOpen] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [saving, setSaving] = useState(false);
