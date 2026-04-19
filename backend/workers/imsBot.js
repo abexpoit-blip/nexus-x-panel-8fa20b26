@@ -596,7 +596,7 @@ async function scrapeOtps() {
 
   if (!onCdrPage || !_cdrPageReady) {
     // First visit (or after logout) — full navigation.
-    // Use networkidle2 so DataTables AJAX has time to populate before we touch the page.
+    // CRITICAL: networkidle2 ensures all assets including DataTables JS load.
     try {
       await page.goto(`${BASE_URL}/client/SMSCDRStats`, { waitUntil: 'networkidle2', timeout: 30000 });
     } catch (e) {
@@ -605,53 +605,65 @@ async function scrapeOtps() {
     }
     if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
 
-    // LIVE-VERIFIED behavior of /client/SMSCDRStats:
-    //   • Page AUTO-LOADS today's CDRs (00:00 → 23:59) on first visit.
-    //   • Default page size = 25. We bump to "All" via the length dropdown so
-    //     a single scrape covers 100s of OTPs (no manual pagination).
-    //   • Clicking "Show Report" triggers a fresh AJAX. Hitting it faster than
-    //     15s shows a rate-limit warning row — outer poll loop is ≥18s.
+    // LIVE-VERIFIED behavior of /client/SMSCDRStats (browser-tested 2026-04-19):
+    //   • Page DOES NOT auto-load any rows — table starts empty until you click "Show Report".
+    //   • Default date range is today 00:00 → today 23:59 — if no SMS today, table stays empty.
+    //   • Default page size = 25. We bump to 100.
+    //   • Clicking "Show Report" faster than 15s shows a rate-limit warning row.
+    //     The warning row REPLACES the data table — so quick re-clicks make us
+    //     see "0 OTPs" forever even when data exists. We MUST wait ≥18s.
+    //   • To reliably catch any fresh OTP, set the START date to YESTERDAY 00:00
+    //     (rolling 48h window). Recent OTPs sort first.
     try {
-      // Wait for the DataTable wrapper itself — confirms AJAX layer is ready
       await page.waitForSelector('table tbody, .dataTables_wrapper', { timeout: 10000 });
-      // Aggressively try to bump page size to maximum so a single scrape covers
-      // 100s of OTPs (critical for burst load — 100+ agents requesting at once).
-      // Returns: { ok, picked, options, currentRows } for diagnostics.
+
+      // Set date-from to yesterday 00:00 (48h rolling window catches all fresh OTPs)
+      const fromDateStr = (() => {
+        const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd} 00:00:00`;
+      })();
+      await page.evaluate((fromStr) => {
+        const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
+        const dateRe = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
+        const dateInputs = inputs.filter(i => dateRe.test(i.value || ''));
+        if (dateInputs.length >= 1) {
+          dateInputs[0].value = fromStr;
+          dateInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+          dateInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }, fromDateStr);
+      _step(`date-from set to ${fromDateStr} (48h rolling window)`);
+
+      // Bump page size to 100
       const sizeResult = await page.evaluate(() => {
         const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
         if (!sel) return { ok: false, reason: 'no length selector found' };
-        const opts = Array.from(sel.options || []).map(o => ({ text: o.text, value: o.value }));
-        // Preference order: "All" → 1000 → 500 → 250 → 100 → highest numeric
-        const findOpt = (pred) => Array.from(sel.options || []).find(pred);
-        // Cap at 100 — anything higher (250/500) makes DataTables render
-        // freeze the JS thread (callFunctionOn timeout). 100 rows = ~3-5s of
-        // recent OTPs which is plenty between 18s polls.
-        let pick = findOpt(o => +o.value === 100)
-                || findOpt(o => +o.value === 50)
-                || findOpt(o => +o.value === 25);
-        if (!pick) {
-          // No preferred option — pick highest numeric value but cap at 100
-          const nums = Array.from(sel.options || [])
-            .map(o => ({ opt: o, n: +o.value }))
-            .filter(x => Number.isFinite(x.n) && x.n > 0 && x.n <= 100)
-            .sort((a, b) => b.n - a.n);
-          if (nums.length) pick = nums[0].opt;
-        }
-        if (!pick) return { ok: false, reason: 'no usable option', options: opts };
+        const opts = Array.from(sel.options || []);
+        let pick = opts.find(o => +o.value === 100)
+                || opts.find(o => +o.value === 50)
+                || opts.find(o => +o.value === 25);
+        if (!pick) return { ok: false, reason: 'no usable option' };
         sel.value = pick.value;
         sel.dispatchEvent(new Event('change', { bubbles: true }));
-        return { ok: true, picked: { text: pick.text, value: pick.value }, options: opts, currentRows: document.querySelectorAll('table tbody tr').length };
+        return { ok: true, picked: { text: pick.text, value: pick.value } };
       });
-      if (sizeResult.ok) {
-        _step(`page-size set to "${sizeResult.picked.text}" (value=${sizeResult.picked.value}, ${sizeResult.options.length} options)`);
-      } else {
-        _step(`page-size NOT set: ${sizeResult.reason} ${sizeResult.options ? '— available: ' + JSON.stringify(sizeResult.options) : ''}`);
-      }
+      if (sizeResult.ok) _step(`page-size set to "${sizeResult.picked.text}"`);
+
+      // Click Show Report — wait for AJAX response so we know data arrived
+      const xhrWait = page.waitForResponse(
+        (r) => /SMSCDRStats|datatables|ajax/i.test(r.url()) && r.request().method() !== 'OPTIONS',
+        { timeout: 25000 }
+      ).catch(() => null);
       await page.evaluate(() => {
         const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
         const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
         if (showBtn) showBtn.click();
       });
+      const resp = await xhrWait;
+      _step(`first show-report click ${resp ? 'AJAX ' + resp.status() : 'no-AJAX'}`);
     } catch (e) {
       console.warn('[ims-bot][scrape] page-prep failed:', e.message);
     }
@@ -659,49 +671,15 @@ async function scrapeOtps() {
     _lastShowReportAt = Date.now();
     _step('first-visit prep done');
   } else {
-    // Subsequent polls: enforce IMS's 15s minimum interval between Show Report
-    // clicks. If we clicked <15s ago, skip the click entirely and just read
-    // whatever data is currently rendered (it's still the freshest CDR data
-    // we got — agents waiting for OTPs will be served from cache anyway).
+    // Subsequent polls: STAY on the same page, click Show Report ONLY (never reload).
+    // IMS rate limit: must wait ≥15s between Show Report clicks.
     const sinceLast = Date.now() - _lastShowReportAt;
     if (sinceLast < 16000) {
       _step(`skip show-report click — only ${sinceLast}ms since last (IMS 15s rule)`);
-      // No click, no wait — just fall through to extract current table rows
     } else {
-      // Periodically (every 5 min) re-verify page size — IMS DataTables can
-      // reset to default 25 on session refresh, silently capping our scrape.
-      if (Date.now() - _lastPageSizeCheckAt > 5 * 60 * 1000) {
-        try {
-          const r = await page.evaluate(() => {
-            const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
-            if (!sel) return { ok: false };
-            const cur = +sel.value;
-            // If currently small, bump back up
-            if (cur > 0 && cur < 50) {
-              const opts = Array.from(sel.options || []);
-              const pick = opts.find(o => +o.value === 100)
-                        || opts.find(o => +o.value === 50);
-              if (pick) {
-                sel.value = pick.value;
-                sel.dispatchEvent(new Event('change', { bubbles: true }));
-                return { ok: true, was: cur, now: pick.value, text: pick.text };
-              }
-            }
-            return { ok: true, was: cur, unchanged: true };
-          });
-          _lastPageSizeCheckAt = Date.now();
-          if (r && r.ok && !r.unchanged) {
-            _step(`page-size re-bumped from ${r.was} → "${r.text}" (was reset by IMS)`);
-          }
-        } catch (_) { /* non-fatal */ }
-      }
-      // STRATEGY (v3): Stay on the CDR page and click "Show Report" to trigger
-      // a fresh AJAX fetch. We WAIT FOR THE XHR RESPONSE itself (not for DOM
-      // changes), so we don't get blocked by frozen JS thread. Page-size stays
-      // at 100, so DataTables redraw is fast (~1-2s).
       try {
         const xhrWait = page.waitForResponse(
-          (r) => /SMSCDRStats|sms.*cdr|datatables|ajax/i.test(r.url()) && r.request().method() !== 'OPTIONS',
+          (r) => /SMSCDRStats|datatables|ajax/i.test(r.url()) && r.request().method() !== 'OPTIONS',
           { timeout: 25000 }
         ).catch(() => null);
         await page.evaluate(() => {
@@ -720,39 +698,44 @@ async function scrapeOtps() {
   }
 
   _step('navigation/refresh done');
-  // Poll for table population via short evaluate() calls instead of
-  // waitForFunction (which runs INSIDE the page — useless if JS thread frozen).
-  // Each evaluate is raced against 1.5s; if 5 attempts all timeout → page frozen.
   // Brief settle so DataTables can paint rows after AJAX response arrived
   await new Promise(r => setTimeout(r, 1500));
-  // Poll for table population via short evaluate() calls instead of
-  // waitForFunction (which runs INSIDE the page — useless if JS thread frozen).
-  // Each evaluate is raced against 2s; up to 15 attempts (~30s) — IMS can be slow.
+  // Poll for table population. CRITICAL: detect the rate-limit warning row
+  // ("CDR Data related pages Refresh must be done with atleast 15 second...")
+  // which IMS returns INSTEAD of data when we re-click too fast.
   let populated = false;
+  let rateLimited = false;
   for (let i = 0; i < 15; i++) {
     try {
-      const ok = await Promise.race([
+      const result = await Promise.race([
         page.evaluate(() => {
           const rows = document.querySelectorAll('table tbody tr');
-          if (!rows.length) return false;
+          if (!rows.length) return { state: 'empty' };
+          let hasWarning = false;
+          let hasData = false;
           for (const r of rows) {
             const t = (r.innerText || '');
-            if (/refresh must be done|attempt is logged/i.test(t)) continue;
-            if (/^(no data|no record|loading|processing)/i.test(t.trim())) continue;
-            if (/\d{8,15}/.test(t)) return true;
+            if (/refresh must be done|attempt is logged|15 second interval/i.test(t)) { hasWarning = true; continue; }
+            if (/^(no data|no record|loading|processing|total sms\s*0)/i.test(t.trim())) continue;
+            if (/\d{8,15}/.test(t)) { hasData = true; break; }
           }
-          return false;
+          if (hasData) return { state: 'data' };
+          if (hasWarning) return { state: 'rate-limited' };
+          return { state: 'pending' };
         }),
         new Promise((_, rej) => setTimeout(() => rej(new Error('eval timeout 2s')), 2000)),
       ]);
-      if (ok) { populated = true; break; }
+      if (result.state === 'data') { populated = true; break; }
+      if (result.state === 'rate-limited') { rateLimited = true; break; }
     } catch (e) {
-      // Single eval timed out — page might be mid-redraw, keep trying
       _step(`poll attempt ${i + 1} timed out (${e.message})`);
     }
     await new Promise(r => setTimeout(r, 1500));
   }
-  _step(`table populated=${populated}`);
+  _step(`table populated=${populated}${rateLimited ? ' (RATE-LIMITED — bot polling too fast!)' : ''}`);
+  if (rateLimited) {
+    logEvent('warn', 'IMS rate-limit warning row seen — bot polling faster than 15s');
+  }
 
   // Debug snapshot — when populated check fails, dump page diagnostics so we
   // can see WHY (wrong selector? page in different state? login redirect?).
