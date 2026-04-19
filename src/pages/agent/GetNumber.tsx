@@ -201,7 +201,20 @@ const AgentGetNumber = () => {
       const nowSec = Math.floor(Date.now() / 1000);
       setNumbers((prev) => [...allocated.map((a: AllocatedNumber) => ({ ...a, status: "active" as const, allocated_at: a.allocated_at ?? nowSec })), ...prev]);
       setPage(1);
-      if (allocated.length) toast({ title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated!`, description: allocated[0].phone_number });
+      if (allocated.length) {
+        // Auto-copy freshly allocated numbers to clipboard (one per line).
+        // Saves the agent from clicking copy on every row when bulk-getting 5/100.
+        try {
+          const clip = allocated.map((a: AllocatedNumber) => a.phone_number).join("\n");
+          await navigator.clipboard.writeText(clip);
+          toast({
+            title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated & copied!`,
+            description: allocated.length === 1 ? allocated[0].phone_number : `${allocated.length} numbers copied to clipboard`,
+          });
+        } catch {
+          toast({ title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated!`, description: allocated[0].phone_number });
+        }
+      }
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     } catch (e: unknown) {
