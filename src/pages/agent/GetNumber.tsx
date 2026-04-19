@@ -59,6 +59,10 @@ const AgentGetNumber = () => {
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedOtpId, setCopiedOtpId] = useState<number | null>(null);
+  // IDs of allocations whose OTP just arrived in the latest poll —
+  // used to flash a green highlight + ring on the row so the agent
+  // visually spots WHICH number got an OTP without scanning the whole list.
+  const [flashOtpIds, setFlashOtpIds] = useState<Set<number>>(new Set());
   const [quantity, setQuantity] = useState(1);
   const [page, setPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
@@ -197,7 +201,20 @@ const AgentGetNumber = () => {
       const nowSec = Math.floor(Date.now() / 1000);
       setNumbers((prev) => [...allocated.map((a: AllocatedNumber) => ({ ...a, status: "active" as const, allocated_at: a.allocated_at ?? nowSec })), ...prev]);
       setPage(1);
-      if (allocated.length) toast({ title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated!`, description: allocated[0].phone_number });
+      if (allocated.length) {
+        // Auto-copy freshly allocated numbers to clipboard (one per line).
+        // Saves the agent from clicking copy on every row when bulk-getting 5/100.
+        try {
+          const clip = allocated.map((a: AllocatedNumber) => a.phone_number).join("\n");
+          await navigator.clipboard.writeText(clip);
+          toast({
+            title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated & copied!`,
+            description: allocated.length === 1 ? allocated[0].phone_number : `${allocated.length} numbers copied to clipboard`,
+          });
+        } catch {
+          toast({ title: `${allocated.length} number${allocated.length > 1 ? "s" : ""} allocated!`, description: allocated[0].phone_number });
+        }
+      }
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     } catch (e: unknown) {
@@ -207,7 +224,10 @@ const AgentGetNumber = () => {
     }
   };
 
-  // Poll OTP sync every 5s while there are pending numbers
+  // Poll OTP sync every 5s while there are pending numbers.
+  // When a poll reveals NEW OTPs (numbers that previously had no OTP but now do),
+  // we flash their rows green for 8s + toast which number got it. This makes it
+  // dead-obvious which row in a 100-number list just received its code.
   useEffect(() => {
     const pending = numbers.filter((n) => !n.otp).length;
     if (pending === 0) return;
@@ -215,7 +235,33 @@ const AgentGetNumber = () => {
       try {
         await api.syncOtp();
         const { numbers: fresh } = await api.myNumbers();
-        setNumbers(fresh as AllocatedNumber[]);
+        const freshList = fresh as AllocatedNumber[];
+        // Diff: which previously-pending IDs now have an OTP?
+        const prevPendingIds = new Set(numbers.filter((n) => !n.otp).map((n) => n.id));
+        const newlyReceived = freshList.filter((n) => n.otp && prevPendingIds.has(n.id));
+        if (newlyReceived.length > 0) {
+          setFlashOtpIds((prev) => {
+            const next = new Set(prev);
+            newlyReceived.forEach((n) => next.add(n.id));
+            return next;
+          });
+          // Auto-clear flash after 8s so the highlight is temporary
+          setTimeout(() => {
+            setFlashOtpIds((prev) => {
+              const next = new Set(prev);
+              newlyReceived.forEach((n) => next.delete(n.id));
+              return next;
+            });
+          }, 8000);
+          // Toast — show which number(s) got OTP
+          newlyReceived.slice(0, 3).forEach((n) => {
+            toast({
+              title: `OTP received: ${n.phone_number}`,
+              description: `Code: ${n.otp}`,
+            });
+          });
+        }
+        setNumbers(freshList);
       } catch { /* ignore */ }
     }, 5000);
     return () => clearInterval(interval);
@@ -552,7 +598,8 @@ const AgentGetNumber = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-[auto_1fr_120px_100px_90px_80px] gap-3 px-4 py-2 text-xs font-semibold text-muted-foreground border-b border-white/[0.06] mb-1">
+          <div className="grid grid-cols-[36px_auto_1fr_120px_100px_90px_80px] gap-3 px-4 py-2 text-xs font-semibold text-muted-foreground border-b border-white/[0.06] mb-1">
+            <span className="text-center">#</span>
             <span className="w-2" />
             <span>Number</span>
             <span>Operator</span>
@@ -562,7 +609,7 @@ const AgentGetNumber = () => {
           </div>
 
           <div className="space-y-1">
-            {pageItems.map((n) => {
+            {pageItems.map((n, idx) => {
               const allocAt = n.allocated_at || nowTick;
               // For received OTPs: show how long it took to arrive.
               // For pending: show REMAINING time before expiry (counts down).
@@ -570,17 +617,35 @@ const AgentGetNumber = () => {
               const remaining = Math.max(0, expirySec - elapsed);
               const tookSec = n.otp && n.otp_received_at ? n.otp_received_at - allocAt : 0;
               const isExpired = !n.otp && remaining <= 0;
+              const serial = start + idx + 1; // global serial across pages
+              const isFlashing = flashOtpIds.has(n.id);
               return (
               <div
                 key={n.id}
-                className="grid grid-cols-[auto_1fr_120px_100px_90px_80px] gap-3 items-center px-4 py-3 rounded-lg bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.04] transition-colors"
+                className={cn(
+                  "grid grid-cols-[36px_auto_1fr_120px_100px_90px_80px] gap-3 items-center px-4 py-3 rounded-lg border transition-all duration-300",
+                  isFlashing
+                    ? "bg-neon-green/[0.12] border-neon-green/60 shadow-[0_0_24px_-4px_hsl(var(--neon-green)/0.55)] ring-1 ring-neon-green/40 animate-pulse"
+                    : n.otp
+                      ? "bg-neon-green/[0.04] border-neon-green/20 hover:bg-neon-green/[0.08]"
+                      : "bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.04]"
+                )}
               >
+                <span className={cn(
+                  "text-[11px] font-mono font-semibold text-center tabular-nums",
+                  n.otp ? "text-neon-green" : "text-muted-foreground"
+                )}>
+                  {serial}
+                </span>
                 <div className={cn(
                   "w-2 h-2 rounded-full",
                   n.otp ? "bg-neon-green" : isExpired ? "bg-neon-red" : n.status === "active" ? "bg-neon-amber animate-pulse" : "bg-neon-red"
                 )} />
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-mono text-foreground">{n.phone_number}</span>
+                  <span className={cn(
+                    "text-sm font-mono",
+                    n.otp ? "text-neon-green font-semibold" : "text-foreground"
+                  )}>{n.phone_number}</span>
                   <button
                     onClick={() => copyItem(n.id, n.phone_number, "num")}
                     className="p-1 rounded hover:bg-white/[0.06] text-muted-foreground hover:text-primary transition-colors"
