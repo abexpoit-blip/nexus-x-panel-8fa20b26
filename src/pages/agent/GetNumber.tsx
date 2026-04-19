@@ -59,6 +59,10 @@ const AgentGetNumber = () => {
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedOtpId, setCopiedOtpId] = useState<number | null>(null);
+  // IDs of allocations whose OTP just arrived in the latest poll —
+  // used to flash a green highlight + ring on the row so the agent
+  // visually spots WHICH number got an OTP without scanning the whole list.
+  const [flashOtpIds, setFlashOtpIds] = useState<Set<number>>(new Set());
   const [quantity, setQuantity] = useState(1);
   const [page, setPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
