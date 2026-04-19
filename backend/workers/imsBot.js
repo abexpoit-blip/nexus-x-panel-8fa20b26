@@ -723,8 +723,13 @@ async function scrapeOtps() {
   // Poll for table population via short evaluate() calls instead of
   // waitForFunction (which runs INSIDE the page — useless if JS thread frozen).
   // Each evaluate is raced against 1.5s; if 5 attempts all timeout → page frozen.
+  // Brief settle so DataTables can paint rows after AJAX response arrived
+  await new Promise(r => setTimeout(r, 1500));
+  // Poll for table population via short evaluate() calls instead of
+  // waitForFunction (which runs INSIDE the page — useless if JS thread frozen).
+  // Each evaluate is raced against 2s; up to 15 attempts (~30s) — IMS can be slow.
   let populated = false;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 15; i++) {
     try {
       const ok = await Promise.race([
         page.evaluate(() => {
@@ -738,15 +743,14 @@ async function scrapeOtps() {
           }
           return false;
         }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('eval timeout 1.5s')), 1500)),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('eval timeout 2s')), 2000)),
       ]);
       if (ok) { populated = true; break; }
     } catch (e) {
-      // page frozen — break early, don't waste more attempts
-      _step(`poll attempt ${i + 1} timed out (${e.message}) — page may be frozen`);
-      break;
+      // Single eval timed out — page might be mid-redraw, keep trying
+      _step(`poll attempt ${i + 1} timed out (${e.message})`);
     }
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1500));
   }
   _step(`table populated=${populated}`);
 
