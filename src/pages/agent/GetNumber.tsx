@@ -702,7 +702,44 @@ const AgentGetNumber = () => {
                 {numbers.length} total · {start + 1}–{Math.min(start + PAGE_SIZE, numbers.length)}
               </span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center flex-wrap">
+              {/* Auto-release expired toggle */}
+              <button
+                type="button"
+                onClick={() => setAutoRelease((v) => !v)}
+                title={autoRelease
+                  ? "Auto-release ON — expired numbers are released automatically after 60s grace"
+                  : "Auto-release OFF — expired numbers stay in the list until you release them manually"}
+                className={cn(
+                  "h-8 px-3 rounded-md text-[11px] font-semibold border transition-all flex items-center gap-1.5",
+                  autoRelease
+                    ? "bg-neon-green/15 border-neon-green/40 text-neon-green hover:bg-neon-green/25"
+                    : "bg-white/[0.04] border-white/[0.1] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+                )}
+              >
+                <span className={cn("w-1.5 h-1.5 rounded-full", autoRelease ? "bg-neon-green animate-pulse" : "bg-muted-foreground/50")} />
+                Auto-release {autoRelease ? "ON" : "OFF"}
+              </button>
+              {/* Desktop notification permission */}
+              <button
+                type="button"
+                onClick={requestNotifPermission}
+                title={
+                  notifPerm === "granted" ? "Desktop notifications enabled — you'll get a popup + sound when OTP arrives, even on another tab"
+                  : notifPerm === "denied" ? "Notifications blocked. Enable in browser site settings."
+                  : "Click to enable desktop notifications + sound when OTP arrives"
+                }
+                className={cn(
+                  "h-8 w-8 flex items-center justify-center rounded-md border transition-all",
+                  notifPerm === "granted"
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : notifPerm === "denied"
+                      ? "bg-destructive/10 border-destructive/30 text-destructive"
+                      : "bg-white/[0.04] border-white/[0.1] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+                )}
+              >
+                {notifPerm === "denied" ? <BellOff className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
+              </button>
               <Button size="sm" variant="outline" onClick={copyAll} className="glass border-white/[0.1] hover:bg-white/[0.06] text-xs">
                 <Copy className="w-3.5 h-3.5 mr-1" /> Copy All
               </Button>
