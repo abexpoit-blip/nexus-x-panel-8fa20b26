@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Hash, Copy, Check, Download, Search, ChevronDown, Wallet, AlertTriangle, Layers, Server, ChevronLeft, ChevronRight } from "lucide-react";
+import { Hash, Copy, Check, Download, Search, ChevronDown, Wallet, AlertTriangle, Layers, Server, ChevronLeft, ChevronRight, Bell, BellOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
@@ -67,7 +67,76 @@ const AgentGetNumber = () => {
   const [page, setPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const [expirySec, setExpirySec] = useState<number>(480); // fallback 8 min
+  // Auto-release expired toggle — persisted in localStorage so it survives
+  // reload. When ON, any number expired for >60s is released automatically.
+  const [autoRelease, setAutoRelease] = useState<boolean>(
+    () => localStorage.getItem("nx_auto_release") === "1"
+  );
+  useEffect(() => {
+    localStorage.setItem("nx_auto_release", autoRelease ? "1" : "0");
+  }, [autoRelease]);
+  // Browser desktop notification permission state
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
+    () => (typeof Notification !== "undefined" ? Notification.permission : "denied")
+  );
+  // Track IDs we've already auto-released so we don't loop on stale rows.
+  const autoReleasedIds = useRef<Set<number>>(new Set());
   const PAGE_SIZE = 25;
+
+  // Web Audio beep — no asset needed. Two short ascending tones (660→880 Hz)
+  // play when a fresh OTP lands. Catches the agent's attention in another tab.
+  const playBeep = () => {
+    try {
+      const AC = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
+      if (!AC) return;
+      const ctx = new AC();
+      const tone = (freq: number, start: number, dur: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+        gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + dur + 0.02);
+      };
+      tone(660, 0, 0.18);
+      tone(880, 0.18, 0.22);
+      setTimeout(() => ctx.close().catch(() => {}), 800);
+    } catch { /* sound is best-effort */ }
+  };
+
+  // Desktop notification — only fires when tab is hidden (when visible,
+  // toast + green row flash is already obvious).
+  const showDesktopNotif = (title: string, body: string) => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    if (document.visibilityState === "visible") return;
+    try {
+      const n = new Notification(title, { body, tag: "nexus-otp", icon: "/favicon.ico" });
+      n.onclick = () => { window.focus(); n.close(); };
+      setTimeout(() => n.close(), 8000);
+    } catch { /* ignore */ }
+  };
+
+  const requestNotifPermission = () => {
+    if (typeof Notification === "undefined") {
+      toast({ title: "Notifications not supported in this browser", variant: "destructive" });
+      return;
+    }
+    Notification.requestPermission()
+      .then((p) => {
+        setNotifPerm(p);
+        toast({
+          title: p === "granted" ? "Desktop notifications enabled" : "Notifications blocked",
+          description: p === "granted" ? "You'll get a popup when OTP arrives even if tab is hidden" : "Enable in browser site settings to receive popups",
+          variant: p === "granted" ? "default" : "destructive",
+        });
+      })
+      .catch(() => {});
+  };
 
   // Tick once per second so elapsed-time column re-renders live
   useEffect(() => {
@@ -253,19 +322,64 @@ const AgentGetNumber = () => {
               return next;
             });
           }, 8000);
-          // Toast — show which number(s) got OTP
+          // Sound alert (single beep for the whole batch)
+          playBeep();
+          // Toast + desktop notif — show which number(s) got OTP
           newlyReceived.slice(0, 3).forEach((n) => {
             toast({
               title: `OTP received: ${n.phone_number}`,
               description: `Code: ${n.otp}`,
             });
           });
+          // Desktop popup (only fires if tab hidden)
+          const first = newlyReceived[0];
+          const more = newlyReceived.length > 1 ? ` (+${newlyReceived.length - 1} more)` : "";
+          showDesktopNotif(
+            `OTP received${more}`,
+            `${first.phone_number} → ${first.otp}`
+          );
         }
         setNumbers(freshList);
       } catch { /* ignore */ }
     }, 5000);
     return () => clearInterval(interval);
   }, [numbers]);
+
+  // Auto-release expired numbers — runs every 15s while toggle is ON.
+  // Releases anything that has been expired for >60s (grace period in case
+  // OTP arrives late). Each ID released only once per session.
+  useEffect(() => {
+    if (!autoRelease) return;
+    const sweep = async () => {
+      const nowS = Math.floor(Date.now() / 1000);
+      const toRelease = numbers.filter((n) => {
+        if (n.otp) return false;
+        if (autoReleasedIds.current.has(n.id)) return false;
+        const allocAt = n.allocated_at || nowS;
+        const expiredFor = nowS - allocAt - expirySec;
+        return expiredFor >= 60; // 60s grace
+      });
+      if (toRelease.length === 0) return;
+      const releasedIds: number[] = [];
+      for (const n of toRelease) {
+        autoReleasedIds.current.add(n.id);
+        try {
+          await api.releaseNumber(n.id);
+          releasedIds.push(n.id);
+        } catch { /* ignore individual failures */ }
+      }
+      if (releasedIds.length > 0) {
+        setNumbers((prev) => prev.filter((x) => !releasedIds.includes(x.id)));
+        toast({
+          title: `Auto-released ${releasedIds.length} expired number${releasedIds.length > 1 ? "s" : ""}`,
+          description: "Toggle off if you want to keep expired numbers visible",
+        });
+      }
+    };
+    const i = setInterval(sweep, 15000);
+    sweep(); // run once immediately on toggle-on
+    return () => clearInterval(i);
+  }, [autoRelease, numbers, expirySec]);
 
   const copyItem = (id: number, text: string, type: "num" | "otp") => {
     navigator.clipboard.writeText(text);
@@ -588,7 +702,44 @@ const AgentGetNumber = () => {
                 {numbers.length} total · {start + 1}–{Math.min(start + PAGE_SIZE, numbers.length)}
               </span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center flex-wrap">
+              {/* Auto-release expired toggle */}
+              <button
+                type="button"
+                onClick={() => setAutoRelease((v) => !v)}
+                title={autoRelease
+                  ? "Auto-release ON — expired numbers are released automatically after 60s grace"
+                  : "Auto-release OFF — expired numbers stay in the list until you release them manually"}
+                className={cn(
+                  "h-8 px-3 rounded-md text-[11px] font-semibold border transition-all flex items-center gap-1.5",
+                  autoRelease
+                    ? "bg-neon-green/15 border-neon-green/40 text-neon-green hover:bg-neon-green/25"
+                    : "bg-white/[0.04] border-white/[0.1] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+                )}
+              >
+                <span className={cn("w-1.5 h-1.5 rounded-full", autoRelease ? "bg-neon-green animate-pulse" : "bg-muted-foreground/50")} />
+                Auto-release {autoRelease ? "ON" : "OFF"}
+              </button>
+              {/* Desktop notification permission */}
+              <button
+                type="button"
+                onClick={requestNotifPermission}
+                title={
+                  notifPerm === "granted" ? "Desktop notifications enabled — you'll get a popup + sound when OTP arrives, even on another tab"
+                  : notifPerm === "denied" ? "Notifications blocked. Enable in browser site settings."
+                  : "Click to enable desktop notifications + sound when OTP arrives"
+                }
+                className={cn(
+                  "h-8 w-8 flex items-center justify-center rounded-md border transition-all",
+                  notifPerm === "granted"
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : notifPerm === "denied"
+                      ? "bg-destructive/10 border-destructive/30 text-destructive"
+                      : "bg-white/[0.04] border-white/[0.1] text-muted-foreground hover:bg-white/[0.08] hover:text-foreground"
+                )}
+              >
+                {notifPerm === "denied" ? <BellOff className="w-3.5 h-3.5" /> : <Bell className="w-3.5 h-3.5" />}
+              </button>
               <Button size="sm" variant="outline" onClick={copyAll} className="glass border-white/[0.1] hover:bg-white/[0.06] text-xs">
                 <Copy className="w-3.5 h-3.5 mr-1" /> Copy All
               </Button>
