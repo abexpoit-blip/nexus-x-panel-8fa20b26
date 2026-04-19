@@ -695,21 +695,25 @@ async function scrapeOtps() {
           }
         } catch (_) { /* non-fatal */ }
       }
-      // STRATEGY CHANGE (v2): Show-report click was hanging the page (DataTables
-      // redraw with 500 rows + AJAX overlay = JS thread frozen → callFunctionOn
-      // timeout). Use page.reload() instead — IMS auto-loads CDR table on visit,
-      // which is far more reliable than driving the click + waiting for redraw.
+      // STRATEGY (v3): Stay on the CDR page and click "Show Report" to trigger
+      // a fresh AJAX fetch. We WAIT FOR THE XHR RESPONSE itself (not for DOM
+      // changes), so we don't get blocked by frozen JS thread. Page-size stays
+      // at 100, so DataTables redraw is fast (~1-2s).
       try {
-        await Promise.race([
-          page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('reload timeout 22s')), 22000)),
-        ]);
-        if (/\/login/i.test(page.url())) { loggedIn = false; _cdrPageReady = false; return []; }
+        const xhrWait = page.waitForResponse(
+          (r) => /SMSCDRStats|sms.*cdr|datatables|ajax/i.test(r.url()) && r.request().method() !== 'OPTIONS',
+          { timeout: 25000 }
+        ).catch(() => null);
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn, a'));
+          const showBtn = btns.find(b => /show\s*report/i.test((b.innerText || b.value || '').trim()));
+          if (showBtn) showBtn.click();
+        });
+        const resp = await xhrWait;
         _lastShowReportAt = Date.now();
-        _cdrPageReady = false; // force page-size re-init on next scrape (auto-load needs bump)
-        _step('reload done');
+        _step(`show-report click ${resp ? 'AJAX ' + resp.status() : 'no-AJAX (cached?)'}`);
       } catch (e) {
-        _step(`reload failed (${e.message}) — recycling page next tick`);
+        _step(`show-report failed (${e.message}) — recycling page next tick`);
         _cdrPageReady = false;
       }
     }
