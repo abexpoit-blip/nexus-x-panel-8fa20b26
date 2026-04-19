@@ -621,34 +621,10 @@ async function scrapeOtps() {
       await page.waitForSelector('table tbody, .dataTables_wrapper', { timeout: 10000 });
 
       // STEP 1 — IMS cooldown after page load (15s)
-      _step('first-visit cooldown #1: waiting 15s before date-change');
+      _step('first-visit cooldown #1: waiting 15s before page-size change');
       await new Promise(r => setTimeout(r, 15000));
 
-      // STEP 2 — Set date-from to yesterday 00:00 (48h rolling window catches fresh OTPs)
-      const fromDateStr = (() => {
-        const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd} 00:00:00`;
-      })();
-      await page.evaluate((fromStr) => {
-        const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-        const dateRe = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/;
-        const dateInputs = inputs.filter(i => dateRe.test(i.value || ''));
-        if (dateInputs.length >= 1) {
-          dateInputs[0].value = fromStr;
-          dateInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-          dateInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }, fromDateStr);
-      _step(`date-from set to ${fromDateStr} (48h rolling window)`);
-
-      // STEP 3 — IMS cooldown #2 (15s) before page-size change
-      _step('first-visit cooldown #2: waiting 15s before page-size change');
-      await new Promise(r => setTimeout(r, 15000));
-
-      // STEP 4 — Bump page size to 100
+      // STEP 2 — Bump page size to 100 (no date change — IMS default range is fine)
       const sizeResult = await page.evaluate(() => {
         const sel = document.querySelector('select[name$="_length"], select.dataTable-selector, .dataTables_length select');
         if (!sel) return { ok: false, reason: 'no length selector found' };
@@ -664,11 +640,11 @@ async function scrapeOtps() {
       if (sizeResult.ok) _step(`page-size set to "${sizeResult.picked.text}"`);
       else _step(`page-size skipped: ${sizeResult.reason}`);
 
-      // STEP 5 — IMS cooldown #3 (18s) before Show Report click
-      _step('first-visit cooldown #3: waiting 18s before Show Report');
-      await new Promise(r => setTimeout(r, 18000));
+      // STEP 3 — IMS cooldown #2 (15s) before Show Report click
+      _step('first-visit cooldown #2: waiting 15s before Show Report');
+      await new Promise(r => setTimeout(r, 15000));
 
-      // STEP 6 — Click Show Report and wait for AJAX
+      // STEP 4 — Click Show Report and wait for AJAX
       const xhrWait = page.waitForResponse(
         (r) => /SMSCDRStats|datatables|ajax/i.test(r.url()) && r.request().method() !== 'OPTIONS',
         { timeout: 15000 }
