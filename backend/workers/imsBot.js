@@ -1177,7 +1177,10 @@ function start() {
   if (BASE_INTERVAL < 18) BASE_INTERVAL = 18;
   if (BASE_INTERVAL > 120) BASE_INTERVAL = 120;
   const BURST_INTERVAL = 18;                          // IMS floor + 3s safety
-  const IDLE_INTERVAL = Math.max(BASE_INTERVAL, 30);  // slow down when nothing's pending
+  // Idle = no active allocations. Bumped to 180s (3 min) to reduce IMS load
+  // and ban risk when nobody is waiting for an OTP. Bot auto-flips to burst
+  // (~18s) the moment any agent grabs a number — see scheduler below.
+  const IDLE_INTERVAL = Math.max(BASE_INTERVAL, 180);
   status.otpIntervalSec = BASE_INTERVAL;
   status.otpIntervalBurstSec = BURST_INTERVAL;
   status.otpIntervalIdleSec = IDLE_INTERVAL;
