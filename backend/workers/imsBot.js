@@ -596,8 +596,9 @@ async function scrapeOtps() {
 
   if (!onCdrPage || !_cdrPageReady) {
     // First visit (or after logout) — full navigation.
+    // Use networkidle2 so DataTables AJAX has time to populate before we touch the page.
     try {
-      await page.goto(`${BASE_URL}/client/SMSCDRStats`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.goto(`${BASE_URL}/client/SMSCDRStats`, { waitUntil: 'networkidle2', timeout: 30000 });
     } catch (e) {
       _cdrPageReady = false;
       throw new Error('CDR page navigation failed: ' + e.message);
