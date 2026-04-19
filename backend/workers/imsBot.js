@@ -668,10 +668,12 @@ async function scrapeOtps() {
     _step('first-visit prep done (records=100 set for session)');
   } else {
     // Subsequent polls: STAY on the same page, click Show Report ONLY (never reload).
-    // IMS rate limit: must wait ≥15s between Show Report clicks.
+    // User rule: only click "Show Report" every 5 minutes — no page-size reset, no date change.
+    // This avoids the IMS DataTables freeze that happens when we re-do prep too often.
+    const SHOW_REPORT_GAP_MS = 5 * 60 * 1000; // 5 min
     const sinceLast = Date.now() - _lastShowReportAt;
-    if (sinceLast < 16000) {
-      _step(`skip show-report click — only ${sinceLast}ms since last (IMS 15s rule)`);
+    if (sinceLast < SHOW_REPORT_GAP_MS) {
+      _step(`skip show-report click — only ${Math.round(sinceLast/1000)}s since last (5min gap)`);
     } else {
       try {
         // Short AJAX wait — if IMS serves from cache or matcher misses, don't hang here.
