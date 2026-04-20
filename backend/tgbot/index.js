@@ -387,7 +387,7 @@ function numberCardKeyboard() {
 bot.start(async (ctx) => {
   const u = ensureTgUser(ctx);
   if (!u) return;
-  if (!ensureBotReady(ctx, u)) return;
+  if (!(await ensureBotReady(ctx, u))) return;
   // Check existing active assignments — re-show them
   const active = getActiveAssignments(u.tg_user_id);
   if (active.length > 0) {
@@ -421,27 +421,27 @@ bot.action('onboard:accept', async (ctx) => {
 
 // ----- Main menu buttons (text triggers) -----
 bot.hears('🌍 Get Number', async (ctx) => {
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
   await showCountries(ctx);
 });
 
 bot.hears('📞 My Numbers', async (ctx) => {
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
   await showMyNumbers(ctx);
 });
 
 bot.hears('📥 OTP History', async (ctx) => {
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
   await showOtpHistory(ctx);
 });
 
 bot.hears('🏆 Leaderboard', async (ctx) => {
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
   await showLeaderboard(ctx);
 });
 
 bot.hears('💰 Wallet', async (ctx) => {
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
   await showWallet(ctx);
 });
 
@@ -508,7 +508,7 @@ bot.action(/^range:([^:]+):([^:]+):(\w+)$/, async (ctx) => {
   const rangeName = decodeURIComponent(ctx.match[2]);
   const cc = ctx.match[3];
 
-  const u = ensureTgUser(ctx); if (!u || !ensureBotReady(ctx, u)) return;
+  const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
 
   // Wallet check
   const setting = db.prepare(
