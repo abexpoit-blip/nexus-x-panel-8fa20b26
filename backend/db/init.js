@@ -19,15 +19,13 @@ const db = new Database(DB_PATH);
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
-// Apply Telegram bot schema (additive)
-const tgSchemaPath = path.join(__dirname, 'tg_schema.sql');
-if (fs.existsSync(tgSchemaPath)) {
-  db.exec(fs.readFileSync(tgSchemaPath, 'utf8'));
-  console.log('✓ TG schema applied');
-}
-
 // --- Idempotent column-add migrations for existing databases ---
+// MUST run BEFORE tg_schema.sql so CREATE INDEX statements on new columns succeed
+function tableExists(table) {
+  return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+}
 function addColIfMissing(table, col, ddl) {
+  if (!tableExists(table)) return; // skip — schema will create with column
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === col)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
@@ -41,6 +39,13 @@ addColIfMissing('allocations', 'cli', 'TEXT');
 addColIfMissing('cdr', 'cli', 'TEXT');
 addColIfMissing('cdr', 'note', 'TEXT');
 addColIfMissing('tg_assignments', 'batch_id', 'TEXT');
+
+// Apply Telegram bot schema (additive) AFTER column migrations
+const tgSchemaPath = path.join(__dirname, 'tg_schema.sql');
+if (fs.existsSync(tgSchemaPath)) {
+  db.exec(fs.readFileSync(tgSchemaPath, 'utf8'));
+  console.log('✓ TG schema applied');
+}
 
 // Seed default admin (only if no admin exists)
 const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
