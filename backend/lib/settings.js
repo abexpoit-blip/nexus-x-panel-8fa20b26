@@ -35,6 +35,70 @@ function getRecentOtpHours() {
   }
 }
 
+// ---- Payment / Withdrawal settings ----
+const PAY_KEYS = {
+  min: 'wd_min_bdt',
+  fee: 'wd_fee_percent',
+  sla: 'wd_sla_hours',
+  methods: 'wd_methods_enabled',
+};
+const PAY_DEFAULTS = {
+  min: 500,
+  fee: 2,
+  sla: 24,
+  methods: { bkash: true, nagad: true, rocket: true, bank: true, crypto: false },
+};
+const ALL_METHODS = ['bkash', 'nagad', 'rocket', 'bank', 'crypto'];
+
+function readNum(key, fallback, min, max) {
+  try {
+    const v = +(db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || NaN);
+    if (!Number.isFinite(v)) return fallback;
+    return Math.max(min, Math.min(max, v));
+  } catch (_) { return fallback; }
+}
+
+function getPaymentConfig() {
+  let methods = PAY_DEFAULTS.methods;
+  try {
+    const raw = db.prepare('SELECT value FROM settings WHERE key = ?').get(PAY_KEYS.methods)?.value;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        methods = { ...PAY_DEFAULTS.methods };
+        for (const m of ALL_METHODS) {
+          if (typeof parsed[m] === 'boolean') methods[m] = parsed[m];
+        }
+      }
+    }
+  } catch (_) { /* fallback to defaults */ }
+
+  return {
+    min_amount: readNum(PAY_KEYS.min, PAY_DEFAULTS.min, 1, 10_000_000),
+    fee_percent: readNum(PAY_KEYS.fee, PAY_DEFAULTS.fee, 0, 50),
+    sla_hours: readNum(PAY_KEYS.sla, PAY_DEFAULTS.sla, 1, 168),
+    methods,
+    methods_enabled: ALL_METHODS.filter((m) => methods[m]),
+    all_methods: ALL_METHODS,
+  };
+}
+
+function savePaymentConfig({ min_amount, fee_percent, sla_hours, methods }) {
+  const stmt = db.prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  );
+  if (Number.isFinite(+min_amount))   stmt.run(PAY_KEYS.min, String(+min_amount));
+  if (Number.isFinite(+fee_percent))  stmt.run(PAY_KEYS.fee, String(+fee_percent));
+  if (Number.isFinite(+sla_hours))    stmt.run(PAY_KEYS.sla, String(+sla_hours));
+  if (methods && typeof methods === 'object') {
+    const clean = {};
+    for (const m of ALL_METHODS) clean[m] = !!methods[m];
+    stmt.run(PAY_KEYS.methods, JSON.stringify(clean));
+  }
+  return getPaymentConfig();
+}
+
 module.exports = {
   getOtpExpirySec,
   OTP_EXPIRY_KEY,
@@ -46,4 +110,7 @@ module.exports = {
   RECENT_OTP_HOURS_DEFAULT,
   RECENT_OTP_HOURS_MIN,
   RECENT_OTP_HOURS_MAX,
+  getPaymentConfig,
+  savePaymentConfig,
+  ALL_METHODS,
 };
