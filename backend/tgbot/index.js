@@ -176,8 +176,9 @@ function getActiveAssignments(tgUserId) {
 
 // ---------- Render the number card ----------
 function renderNumberCard(a) {
-  const flag = flagOf(a.country_code);
-  const cName = countryName(a.country_code);
+  const cc = bestCountryCode(a.country_code, a.range_name);
+  const flag = flagOf(cc);
+  const cName = countryName(cc);
   const svc = a.service ? `${serviceIcon(a.service)} ${a.service}` : '📡 SMS';
   const remaining = Math.max(0, a.expires_at - now());
   const mins = Math.floor(remaining / 60);
