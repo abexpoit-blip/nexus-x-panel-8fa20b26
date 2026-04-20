@@ -35,11 +35,42 @@ const parseUA = (ua: string) => {
 
 const AdminSecurity = () => {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"audit" | "sessions" | "impersonation" | "settings" | "maintenance" | "password">("audit");
+  const [tab, setTab] = useState<"audit" | "sessions" | "impersonation" | "settings" | "maintenance" | "fakeotp" | "password">("audit");
   const [auditSearch, setAuditSearch] = useState("");
   const [auditCategory, setAuditCategory] = useState<"all" | "pool_cleanup" | "ims_bot" | "auth" | "agents" | "settings">("all");
   const { signupEnabled, setSignupEnabled, maintenanceMode, maintenanceMessage, setMaintenanceMode } = useAuth();
   const [draftMsg, setDraftMsg] = useState(maintenanceMessage);
+
+  // Fake OTP broadcaster state
+  const fakeQuery = useQuery({
+    queryKey: ["fake-otp"], queryFn: () => api.fakeOtp.get(), refetchInterval: 15000,
+  });
+  const [fakeForm, setFakeForm] = useState({ enabled: false, min_sec: 20, max_sec: 30, burst: 2 });
+  const [rangesQuery] = [useQuery({
+    queryKey: ["fake-otp-ranges"], queryFn: () => api.tgbot.rangeSettings(),
+  })];
+  // Sync form when query loads
+  useState(() => {
+    fakeQuery.data && setFakeForm({
+      enabled: fakeQuery.data.enabled, min_sec: fakeQuery.data.min_sec,
+      max_sec: fakeQuery.data.max_sec, burst: fakeQuery.data.burst,
+    });
+  });
+  const saveFake = useMutation({
+    mutationFn: (body: Partial<typeof fakeForm>) => api.fakeOtp.save(body),
+    onSuccess: () => { toast.success("Fake-OTP settings saved"); qc.invalidateQueries({ queryKey: ["fake-otp"] }); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const purgeFake = useMutation({
+    mutationFn: () => api.fakeOtp.purge(),
+    onSuccess: (d: any) => toast.success(`Purged ${d.removed} fake CDR rows`),
+    onError: (e: any) => toast.error(e.message),
+  });
+  const toggleFakeRange = useMutation({
+    mutationFn: (body: { provider: string; range_name: string; tg_enabled: boolean; tg_rate_bdt: number; service?: string }) =>
+      api.tgbot.updateRange(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["fake-otp-ranges"] }),
+  });
 
   const { data: auditData, isLoading: auditLoading } = useQuery({
     queryKey: ["audit-logs"], queryFn: () => api.audit.list({ limit: 200 }), refetchInterval: 30000,
