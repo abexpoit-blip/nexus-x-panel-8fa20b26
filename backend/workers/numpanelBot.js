@@ -397,8 +397,12 @@ async function login() {
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // Ensure browser+page exist; if a previous attempt detached the frame, recycle.
-      if (!browser || !page || page.isClosed?.()) {
+      // Ensure browser+page exist; on retries (or if frame detached), force a clean recycle.
+      let needsRecycle = !browser || !page || attempt > 1;
+      if (!needsRecycle) {
+        try { needsRecycle = page.isClosed(); } catch (_) { needsRecycle = true; }
+      }
+      if (needsRecycle) {
         try { await browser?.close(); } catch (_) {}
         browser = null; page = null;
         await ensureBrowser();
@@ -422,6 +426,9 @@ async function login() {
       lastErr = e;
       console.warn(`[numpanel-bot] login attempt ${attempt}/3 failed: ${e.message}`);
       logEvent('warn', `Login attempt ${attempt}/3 failed: ${e.message}`);
+      // Tear down so next attempt starts with a fresh browser+page
+      try { await browser?.close(); } catch (_) {}
+      browser = null; page = null;
       await new Promise(r => setTimeout(r, 1500 * attempt));
     }
   }
