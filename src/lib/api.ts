@@ -407,6 +407,13 @@ export const api = {
       request("/notifications/broadcast", { method: "POST", body: JSON.stringify(body) }),
   },
 
+  // Public leaderboard (any authenticated user)
+  leaderboard: (period: "today" | "7d" | "all" = "today") =>
+    request<{
+      leaderboard: { id: number; username: string; otp_count: number; numbers_used?: number; earnings_bdt?: number }[];
+      period: string;
+    }>(`/leaderboard?period=${period}`),
+
   // Audit Logs (Phase 4 — Enterprise security)
   audit: {
     list: (params?: { limit?: number; user_id?: number; action?: string }) => {
