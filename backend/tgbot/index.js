@@ -868,6 +868,117 @@ async function processBroadcasts() {
 }
 
 // ============================================================
+// FAKE OTP BROADCASTER — toggle-driven, samples real numbers (read-only)
+// from enabled ranges, generates 5–6 digit OTPs, posts to public TG group
+// AND inserts CDR rows tagged 'fake:broadcast' (visible while toggle ON,
+// filtered out when OFF — never affects real OTPs / pool).
+// ============================================================
+function getFakeCfg() {
+  const rows = db.prepare(`
+    SELECT key, value FROM settings WHERE key IN
+    ('fake_otp_enabled','fake_otp_min_sec','fake_otp_max_sec','fake_otp_burst')
+  `).all();
+  const m = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  return {
+    enabled: m.fake_otp_enabled === 'true',
+    minSec: Math.max(5, +m.fake_otp_min_sec || 20),
+    maxSec: Math.max(5, +m.fake_otp_max_sec || 30),
+    burst:  Math.max(1, Math.min(10, +m.fake_otp_burst || 2)),
+  };
+}
+
+function sampleRealPoolNumbers(count) {
+  // READ-ONLY sample. Borrows phone+meta from pool without mutating allocations.
+  return db.prepare(`
+    SELECT a.phone_number, a.country_code, a.operator AS range_name,
+           a.provider, r.service, r.tg_rate_bdt
+    FROM allocations a
+    JOIN range_tg_settings r
+      ON r.provider = a.provider
+     AND r.range_name = COALESCE(a.operator, 'Unknown')
+    WHERE a.status = 'pool' AND r.tg_enabled = 1
+    ORDER BY RANDOM()
+    LIMIT ?
+  `).all(count);
+}
+
+function genFakeOtp() {
+  const len = Math.random() < 0.5 ? 5 : 6;
+  let s = '';
+  for (let i = 0; i < len; i++) s += Math.floor(Math.random() * 10);
+  return s;
+}
+
+function getOrCreateFakeUserId() {
+  let u = db.prepare("SELECT id FROM users WHERE username = '__fake_broadcast__'").get();
+  if (!u) {
+    const r = db.prepare(`INSERT INTO users (username, password_hash, role, status, full_name)
+      VALUES ('__fake_broadcast__', '!', 'agent', 'suspended', 'Fake Broadcast (system)')`).run();
+    u = { id: r.lastInsertRowid };
+  }
+  return u.id;
+}
+
+async function fakeOtpBroadcastTick() {
+  try {
+    const cfg = getFakeCfg();
+    if (!cfg.enabled) return;
+    const samples = sampleRealPoolNumbers(cfg.burst);
+    if (samples.length === 0) return;
+
+    const channelId = getPublicChannelId();
+    const sysUser = getOrCreateFakeUserId();
+    const insertCdr = db.prepare(`
+      INSERT INTO cdr (user_id, allocation_id, provider, country_code, operator,
+                       phone_number, otp_code, cli, price_bdt, status, note)
+      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 0, 'billed', 'fake:broadcast')
+    `);
+
+    for (const row of samples) {
+      const otp = genFakeOtp();
+      const cc = bestCountryCode(row.country_code, row.range_name);
+      try {
+        insertCdr.run(
+          sysUser, row.provider || 'fake', cc || row.country_code || null,
+          row.range_name || null, row.phone_number, otp,
+          row.service || 'OTP'
+        );
+      } catch (e) { console.warn('[fake-otp] cdr insert fail:', e.message); }
+
+      if (channelId) {
+        const masked = maskLast4(row.phone_number);
+        const otpMasked = maskLast4(otp);
+        try {
+          await bot.telegram.sendMessage(channelId,
+            `🔥 <b>New OTP Received</b>\n` +
+            `📱 <code>${masked}</code>\n` +
+            `🔐 <code>${otpMasked}</code>\n` +
+            `${flagOf(cc)} ${escapeHtml(countryName(cc))} • ${serviceIcon(row.service)} ${escapeHtml(row.range_name || row.service || 'OTP')}`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (e) { console.warn('[fake-otp] tg post fail:', e.message); }
+        await new Promise(r => setTimeout(r, 600));
+      }
+    }
+    console.log(`[fake-otp] burst sent: ${samples.length} (channel=${channelId ? 'yes' : 'no'})`);
+  } catch (e) {
+    console.error('[fake-otp] tick error:', e.message);
+  } finally {
+    scheduleNextFakeTick();
+  }
+}
+
+let _fakeTimer = null;
+function scheduleNextFakeTick() {
+  if (_fakeTimer) clearTimeout(_fakeTimer);
+  const cfg = getFakeCfg();
+  const delay = cfg.enabled
+    ? Math.floor((cfg.minSec + Math.random() * Math.max(0, cfg.maxSec - cfg.minSec)) * 1000)
+    : 30_000; // cheap idle poll while disabled
+  _fakeTimer = setTimeout(fakeOtpBroadcastTick, delay);
+}
+
+// ============================================================
 // LAUNCH
 // ============================================================
 bot.catch((err, ctx) => {
