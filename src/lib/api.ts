@@ -529,6 +529,15 @@ export const api = {
   },
 };
 
+export interface PaymentConfig {
+  min_amount: number;
+  fee_percent: number;
+  sla_hours: number;
+  methods: Record<string, boolean>;
+  methods_enabled: string[];
+  all_methods: string[];
+}
+
 export interface ProviderStatus {
   id: string;
   name: string;
