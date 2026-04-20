@@ -869,7 +869,7 @@ function expireOldAssignments() {
     const txn = db.transaction(() => {
       for (const e of expired) {
         db.prepare("UPDATE tg_assignments SET status='expired' WHERE id = ?").run(e.id);
-        db.prepare("UPDATE allocations SET status='pool' WHERE id = ? AND status='active'").run(e.allocation_id);
+        db.prepare("UPDATE allocations SET status='pool', allocated_at=strftime('%s','now') WHERE id = ? AND status='active'").run(e.allocation_id);
       }
     });
     txn();
