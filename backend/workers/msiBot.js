@@ -33,6 +33,21 @@ function readSetting(key) {
   try { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null; }
   catch (_) { return null; }
 }
+// Strip any path/query/hash so BASE_URL stays as scheme+host only.
+// Admins sometimes paste the full login URL (http://host/ints/login) which
+// would cause us to build http://host/ints/login/ints/login → 403/ERR_ABORTED.
+function normalizeBase(raw) {
+  const fallback = 'http://145.239.130.45';
+  if (!raw) return fallback;
+  let s = String(raw).trim().replace(/\/+$/, '');
+  if (!s) return fallback;
+  try {
+    const u = new URL(/^https?:\/\//i.test(s) ? s : `http://${s}`);
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return s.replace(/\/ints\/.*$/i, '').replace(/\/+$/, '') || fallback;
+  }
+}
 function resolveCreds() {
   const dbEnabled = readSetting('msi_enabled');
   const dbUser = readSetting('msi_username');
@@ -40,7 +55,7 @@ function resolveCreds() {
   const dbBase = readSetting('msi_base_url');
   return {
     ENABLED: (dbEnabled !== null ? dbEnabled : (process.env.MSI_ENABLED || 'false')).toString().toLowerCase() === 'true',
-    BASE_URL: (dbBase || process.env.MSI_BASE_URL || 'http://145.239.130.45').replace(/\/$/, ''),
+    BASE_URL: normalizeBase(dbBase || process.env.MSI_BASE_URL),
     USERNAME: dbUser || process.env.MSI_USERNAME || '',
     PASSWORD: dbPass || process.env.MSI_PASSWORD || '',
   };
