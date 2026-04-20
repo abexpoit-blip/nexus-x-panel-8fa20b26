@@ -26,8 +26,15 @@ function getPublicChannelId() {
   try {
     const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_public_channel'").get()?.value;
     if (!v) return null;
-    const n = String(v).trim();
-    return n || null;
+    let n = String(v).trim();
+    if (!n) return null;
+    // Accept @username, plain username, https://t.me/username, or numeric -100… chat id
+    if (n.startsWith('https://t.me/')) n = n.replace('https://t.me/', '');
+    if (n.startsWith('http://t.me/')) n = n.replace('http://t.me/', '');
+    if (/^-?\d+$/.test(n)) return n;            // numeric chat id
+    if (n.startsWith('@')) return n;            // @channelusername
+    if (n.startsWith('+')) return null;         // private invite hash — needs numeric id, can't post
+    return '@' + n;                             // bare username → prepend @
   } catch { return null; }
 }
 
