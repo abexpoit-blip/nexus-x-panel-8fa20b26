@@ -103,33 +103,42 @@ function escapeHtml(s) {
 }
 
 // ---------- Country list (only TG-enabled ranges with pool > 0) ----------
+// Country code is inferred from range_name when allocations.country_code is missing
 function listCountries() {
-  return db.prepare(`
-    SELECT a.country_code AS code, COUNT(*) AS cnt
+  const rows = db.prepare(`
+    SELECT a.country_code AS raw_cc, COALESCE(a.operator,'Unknown') AS range_name, COUNT(*) AS cnt
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
     WHERE a.status = 'pool' AND r.tg_enabled = 1
-    GROUP BY a.country_code
-    HAVING cnt > 0
-    ORDER BY cnt DESC, code ASC
+    GROUP BY a.country_code, range_name
   `).all();
+  const agg = new Map();
+  for (const r of rows) {
+    const cc = bestCountryCode(r.raw_cc, r.range_name) || 'XX';
+    agg.set(cc, (agg.get(cc) || 0) + r.cnt);
+  }
+  return Array.from(agg.entries())
+    .map(([code, cnt]) => ({ code, cnt }))
+    .filter(r => r.cnt > 0)
+    .sort((a, b) => b.cnt - a.cnt || a.code.localeCompare(b.code));
 }
 
 function listRangesForCountry(cc) {
-  return db.prepare(`
-    SELECT a.provider, COALESCE(a.operator, 'Unknown') AS range_name,
+  const rows = db.prepare(`
+    SELECT a.provider, COALESCE(a.operator, 'Unknown') AS range_name, a.country_code AS raw_cc,
            r.service, r.tg_rate_bdt, COUNT(*) AS cnt
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
-    WHERE a.status = 'pool' AND r.tg_enabled = 1 AND a.country_code = ?
-    GROUP BY a.provider, range_name, r.service, r.tg_rate_bdt
-    HAVING cnt > 0
-    ORDER BY cnt DESC, range_name ASC
-  `).all(cc);
+    WHERE a.status = 'pool' AND r.tg_enabled = 1
+    GROUP BY a.provider, range_name, a.country_code, r.service, r.tg_rate_bdt
+  `).all();
+  return rows
+    .filter(r => (bestCountryCode(r.raw_cc, r.range_name) || 'XX') === cc && r.cnt > 0)
+    .sort((a, b) => b.cnt - a.cnt || a.range_name.localeCompare(b.range_name));
 }
 
 // ---------- Atomic claim N numbers ----------
