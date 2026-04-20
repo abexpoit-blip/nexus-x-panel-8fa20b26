@@ -93,6 +93,7 @@ app.use('/api', require('./routes/payments'));            // /payments + /withdr
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leaderboard', require('./routes/leaderboard'));
 app.use('/api', require('./routes/security'));            // /audit + /sessions + /settings
+app.use('/api/admin/tgbot', require('./routes/tgbot'));   // Telegram bot admin
 
 // Health
 app.get('/api/health', (_, res) => res.json({ ok: true, ts: Date.now() }));

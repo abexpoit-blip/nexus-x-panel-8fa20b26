@@ -53,8 +53,17 @@ if pm2 list | grep -q "$PM2_NAME"; then
 else
   pm2 start server.js --name "$PM2_NAME"
 fi
+
+# Telegram bot — separate pm2 process
+TGBOT_NAME="nexus-tgbot"
+echo -e "\n${Y}▶ Restarting Telegram bot (pm2: $TGBOT_NAME)…${N}"
+if pm2 list | grep -q "$TGBOT_NAME"; then
+  pm2 restart "$TGBOT_NAME" --update-env
+else
+  pm2 start tgbot/index.js --name "$TGBOT_NAME"
+fi
 pm2 save > /dev/null
-echo -e "${G}✓ Backend restarted${N}"
+echo -e "${G}✓ Backend + TG bot restarted${N}"
 
 # 3. Frontend build (FORCE clean build — no stale cache)
 echo -e "\n${Y}▶ Building frontend (clean)…${N}"
