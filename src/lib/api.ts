@@ -386,7 +386,10 @@ export const api = {
 
   // Withdrawals (Phase 3 — Revenue auto-engine)
   withdrawals: {
-    policy: () => request<{ min_amount: number; fee_percent: number; sla_hours: number }>("/withdrawals/policy"),
+    policy: () => request<{
+      min_amount: number; fee_percent: number; sla_hours: number;
+      methods?: Record<string, boolean>; methods_enabled?: string[];
+    }>("/withdrawals/policy"),
     mine: () => request<{ withdrawals: Withdrawal[] }>("/withdrawals/mine"),
     pending: () => request<{ withdrawals: Withdrawal[] }>("/withdrawals/pending"),
     all: (status?: string) => request<{ withdrawals: Withdrawal[] }>(`/withdrawals${status ? `?status=${status}` : ""}`),
@@ -396,6 +399,9 @@ export const api = {
       request(`/withdrawals/${id}/approve`, { method: "POST", body: JSON.stringify({ admin_note }) }),
     reject: (id: number, admin_note?: string) =>
       request(`/withdrawals/${id}/reject`, { method: "POST", body: JSON.stringify({ admin_note }) }),
+    config: () => request<PaymentConfig>("/admin/payment-config"),
+    saveConfig: (body: Partial<PaymentConfig>) =>
+      request<PaymentConfig>("/admin/payment-config", { method: "PUT", body: JSON.stringify(body) }),
   },
 
   // Notifications
