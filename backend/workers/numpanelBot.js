@@ -555,8 +555,21 @@ async function scrapeNumbers() {
     return []; // pool fill disabled
   }
 
+  // Read per-range request_override from numpanel_range_meta
+  let overrideMap = new Map();
+  try {
+    const rows = db.prepare(
+      `SELECT range_prefix, request_override FROM numpanel_range_meta WHERE request_override IS NOT NULL`
+    ).all();
+    for (const row of rows) overrideMap.set(row.range_prefix, +row.request_override);
+  } catch (_) { /* table may not exist on first boot */ }
+
   for (const rr of rangeRows.slice(0, 50)) { // safety cap
-    for (let click = 0; click < REQUEST_PER_RANGE; click++) {
+    const perRangeMax = overrideMap.has(rr.range)
+      ? Math.max(0, overrideMap.get(rr.range))
+      : REQUEST_PER_RANGE;
+    if (perRangeMax === 0) continue;
+    for (let click = 0; click < perRangeMax; click++) {
       try {
         // Click REQUEST on this row, capture any popup/toast text or the updated row
         const result = await page.evaluate((rowIdx) => {
