@@ -5,6 +5,7 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const { Telegraf, Markup } = require('telegraf');
 const db = require('../lib/db');
+const { bestCountryCode, countryName: ccName, flagOf: ccFlag, COUNTRY_NAMES: CC_NAMES } = require('../lib/countryInfer');
 
 const TOKEN = process.env.TG_BOT_TOKEN;
 if (!TOKEN) {
@@ -37,24 +38,10 @@ const fmtAgo = (sec) => {
   return `${Math.floor(s / 86400)}d ago`;
 };
 
-// Country code → flag emoji
-function flagOf(cc) {
-  if (!cc || cc.length !== 2) return '🌐';
-  const A = 0x1F1E6;
-  const a = 'A'.charCodeAt(0);
-  return String.fromCodePoint(A + (cc.charCodeAt(0) - a)) +
-         String.fromCodePoint(A + (cc.charCodeAt(1) - a));
-}
-
-const COUNTRY_NAMES = {
-  AF: 'Afghanistan', BD: 'Bangladesh', ET: 'Ethiopia', IN: 'India', ID: 'Indonesia',
-  MM: 'Myanmar', PK: 'Pakistan', PH: 'Philippines', VN: 'Vietnam', NG: 'Nigeria',
-  US: 'United States', UK: 'United Kingdom', VE: 'Venezuela', BR: 'Brazil',
-  CN: 'China', RU: 'Russia', TH: 'Thailand', KH: 'Cambodia', LA: 'Laos',
-  MY: 'Malaysia', SG: 'Singapore', JP: 'Japan', KR: 'South Korea',
-  TR: 'Turkey', SA: 'Saudi Arabia', AE: 'UAE', EG: 'Egypt',
-};
-const countryName = (cc) => COUNTRY_NAMES[cc] || cc || 'Unknown';
+// Country code → flag emoji (delegated to shared helper)
+const flagOf = ccFlag;
+const COUNTRY_NAMES = CC_NAMES;
+const countryName = ccName;
 
 // Service icon
 function serviceIcon(svc) {
@@ -116,49 +103,62 @@ function escapeHtml(s) {
 }
 
 // ---------- Country list (only TG-enabled ranges with pool > 0) ----------
+// Country code is inferred from range_name when allocations.country_code is missing
 function listCountries() {
-  return db.prepare(`
-    SELECT a.country_code AS code, COUNT(*) AS cnt
+  const rows = db.prepare(`
+    SELECT a.country_code AS raw_cc, COALESCE(a.operator,'Unknown') AS range_name, COUNT(*) AS cnt
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
     WHERE a.status = 'pool' AND r.tg_enabled = 1
-    GROUP BY a.country_code
-    HAVING cnt > 0
-    ORDER BY cnt DESC, code ASC
+    GROUP BY a.country_code, range_name
   `).all();
+  const agg = new Map();
+  for (const r of rows) {
+    const cc = bestCountryCode(r.raw_cc, r.range_name) || 'XX';
+    agg.set(cc, (agg.get(cc) || 0) + r.cnt);
+  }
+  return Array.from(agg.entries())
+    .map(([code, cnt]) => ({ code, cnt }))
+    .filter(r => r.cnt > 0)
+    .sort((a, b) => b.cnt - a.cnt || a.code.localeCompare(b.code));
 }
 
 function listRangesForCountry(cc) {
-  return db.prepare(`
-    SELECT a.provider, COALESCE(a.operator, 'Unknown') AS range_name,
+  const rows = db.prepare(`
+    SELECT a.provider, COALESCE(a.operator, 'Unknown') AS range_name, a.country_code AS raw_cc,
            r.service, r.tg_rate_bdt, COUNT(*) AS cnt
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
-    WHERE a.status = 'pool' AND r.tg_enabled = 1 AND a.country_code = ?
-    GROUP BY a.provider, range_name, r.service, r.tg_rate_bdt
-    HAVING cnt > 0
-    ORDER BY cnt DESC, range_name ASC
-  `).all(cc);
+    WHERE a.status = 'pool' AND r.tg_enabled = 1
+    GROUP BY a.provider, range_name, a.country_code, r.service, r.tg_rate_bdt
+  `).all();
+  return rows
+    .filter(r => (bestCountryCode(r.raw_cc, r.range_name) || 'XX') === cc && r.cnt > 0)
+    .sort((a, b) => b.cnt - a.cnt || a.range_name.localeCompare(b.range_name));
 }
 
 // ---------- Atomic claim N numbers ----------
+// `cc` is the *intended* country (possibly inferred). We match either the
+// real country_code column or fall back to range-name inference.
 function claimBatch(provider, rangeName, cc, count) {
   const sel = db.prepare(`
     SELECT id, phone_number, operator, country_code
     FROM allocations
-    WHERE provider = ? AND COALESCE(operator,'Unknown') = ? AND country_code = ? AND status = 'pool'
+    WHERE provider = ? AND COALESCE(operator,'Unknown') = ? AND status = 'pool'
     ORDER BY allocated_at ASC
     LIMIT ?
   `);
   const claim = db.prepare("UPDATE allocations SET status='claiming' WHERE id = ? AND status = 'pool'");
   const won = [];
-  const candidates = sel.all(provider, rangeName, cc, count * 3);
+  const candidates = sel.all(provider, rangeName, count * 5);
   for (const c of candidates) {
     if (won.length >= count) break;
+    const rowCc = bestCountryCode(c.country_code, c.operator || rangeName) || 'XX';
+    if (rowCc !== cc) continue;
     const r = claim.run(c.id);
     if (r.changes === 1) won.push(c);
   }
@@ -176,8 +176,9 @@ function getActiveAssignments(tgUserId) {
 
 // ---------- Render the number card ----------
 function renderNumberCard(a) {
-  const flag = flagOf(a.country_code);
-  const cName = countryName(a.country_code);
+  const cc = bestCountryCode(a.country_code, a.range_name);
+  const flag = flagOf(cc);
+  const cName = countryName(cc);
   const svc = a.service ? `${serviceIcon(a.service)} ${a.service}` : '📡 SMS';
   const remaining = Math.max(0, a.expires_at - now());
   const mins = Math.floor(remaining / 60);

@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../lib/db');
 const { authRequired, adminOnly } = require('../middleware/auth');
 const { logFromReq } = require('../lib/audit');
+const { bestCountryCode } = require('../lib/countryInfer');
 
 const router = express.Router();
 router.use(authRequired, adminOnly);
@@ -84,8 +85,10 @@ router.get('/range-settings', (req, res) => {
   const merged = pools.map(p => {
     const k = `${p.provider}::${p.range_name}`;
     const s = map.get(k) || { tg_enabled: 0, tg_rate_bdt: 0, service: null };
+    const inferredCc = bestCountryCode(p.country_code, p.range_name);
     return {
-      provider: p.provider, range_name: p.range_name, country_code: p.country_code,
+      provider: p.provider, range_name: p.range_name,
+      country_code: inferredCc || p.country_code || null,
       pool_count: p.pool_count, tg_enabled: !!s.tg_enabled,
       tg_rate_bdt: s.tg_rate_bdt || 0, service: s.service || null,
     };
@@ -109,16 +112,19 @@ router.put('/range-settings', (req, res) => {
   res.json({ ok: true });
 });
 
-// Bulk enable / disable
+// Bulk enable / disable — supports inferred country codes
 router.post('/range-settings/bulk', (req, res) => {
   const { provider, country_code, tg_enabled, tg_rate_bdt, service } = req.body || {};
   if (!provider) return res.status(400).json({ error: 'provider required' });
-  const where = country_code ? 'AND country_code = ?' : '';
-  const args = country_code ? [provider, country_code] : [provider];
-  const ranges = db.prepare(`
-    SELECT DISTINCT COALESCE(operator,'Unknown') AS range_name FROM allocations
-    WHERE status = 'pool' AND provider = ? ${where}
-  `).all(...args);
+  // Pull all distinct ranges for this provider, then JS-side filter by inferred cc.
+  const all = db.prepare(`
+    SELECT DISTINCT COALESCE(operator,'Unknown') AS range_name, country_code
+    FROM allocations
+    WHERE status = 'pool' AND provider = ?
+  `).all(provider);
+  const ranges = country_code
+    ? all.filter(r => bestCountryCode(r.country_code, r.range_name) === country_code)
+    : all;
   const stmt = db.prepare(`
     INSERT INTO range_tg_settings (provider, range_name, tg_enabled, tg_rate_bdt, service, updated_at)
     VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
