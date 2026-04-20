@@ -65,6 +65,13 @@ let otpTimer = null;
 let numbersTimer = null;
 let _stopped = false;
 let emptyStreak = 0;
+let _cookieFailStreak = 0;
+let _lastCookieExpiryAlertAt = 0;
+
+// Cookie domain — MSI runs on bare IP so we strip protocol
+function cookieDomain() {
+  try { return new URL(BASE_URL).hostname; } catch (_) { return '145.239.130.45'; }
+}
 
 const status = {
   enabled: false,
