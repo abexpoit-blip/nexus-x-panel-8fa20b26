@@ -10,7 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-type MsiStatus = {
+type NumPanelStatusT = {
   enabled: boolean;
   running: boolean;
   loggedIn: boolean;
@@ -155,13 +155,13 @@ const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.admin.msiCredentials().then(d => setCreds(c => ({ ...c, ...d, password: "" }))).catch(() => {});
+    api.admin.numpanelCredentials().then(d => setCreds(c => ({ ...c, ...d, password: "" }))).catch(() => {});
   }, []);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.admin.msiCredentialsSave({
+      await api.admin.numpanelCredentialsSave({
         username: creds.username || undefined,
         password: creds.password || undefined,
         base_url: creds.base_url || undefined,
@@ -178,19 +178,19 @@ const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
   return (
     <div className="glass-card border border-white/[0.06] rounded-xl p-5 space-y-4">
       <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-        <Layers className="w-3.5 h-3.5 text-neon-cyan" /> MSI Credentials
+        <Layers className="w-3.5 h-3.5 text-neon-cyan" /> NumPanel Credentials
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="flex items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
           <input type="checkbox" checked={creds.enabled} onChange={e => setCreds(c => ({ ...c, enabled: e.target.checked }))} />
-          Enable MSI bot
+          Enable NumPanel bot
         </label>
         <div>
           <div className="text-xs text-muted-foreground mb-1">Base URL</div>
           <input
             type="text" value={creds.base_url}
             onChange={e => setCreds(c => ({ ...c, base_url: e.target.value }))}
-            placeholder="http://145.239.130.45"
+            placeholder="http://51.89.99.105"
             className="w-full bg-white/[0.04] border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono"
           />
         </div>
@@ -199,7 +199,7 @@ const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
           <input
             type="text" value={creds.username}
             onChange={e => setCreds(c => ({ ...c, username: e.target.value }))}
-            placeholder="Ashik07"
+            placeholder="ahmed1258"
             className="w-full bg-white/[0.04] border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono"
           />
         </div>
@@ -231,15 +231,15 @@ const CredentialsEditor = ({ onSaved }: { onSaved: () => void }) => {
   );
 };
 
-// ---- MSI Session Cookies (mirrors IMS cookie bypass) ----
-const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => void; cookieFailStreak?: number }) => {
+// ---- NumPanel Session Cookies (mirrors IMS cookie bypass) ----
+const NumPanelCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => void; cookieFailStreak?: number }) => {
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
   const { data, refetch } = useQuery({
-    queryKey: ["msi-cookies-status"],
-    queryFn: () => api.admin.msiCookiesStatus(),
+    queryKey: ["numpanel-cookies-status"],
+    queryFn: () => api.admin.numpanelCookiesStatus(),
     refetchInterval: 15000,
   });
 
@@ -247,7 +247,7 @@ const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => vo
     if (!raw.trim()) { toast.error("Paste cookies first"); return; }
     setSaving(true);
     try {
-      await api.admin.msiCookiesSave(raw.trim());
+      await api.admin.numpanelCookiesSave(raw.trim());
       toast.success("Cookies saved — bot restarting and will skip captcha");
       setRaw("");
       refetch();
@@ -261,7 +261,7 @@ const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => vo
     if (!confirm("Clear saved MSI cookies? Bot will fall back to captcha login on next start.")) return;
     setClearing(true);
     try {
-      await api.admin.msiCookiesClear();
+      await api.admin.numpanelCookiesClear();
       toast.success("Cookies cleared — bot restarting");
       refetch();
       setTimeout(onSaved, 2000);
@@ -282,7 +282,7 @@ const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => vo
           </div>
           <div className="text-left">
             <div className="text-sm font-semibold flex items-center gap-2">
-              MSI Session Cookies
+              NumPanel Session Cookies
               {cookieFailStreak >= 3 ? (
                 <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-destructive/20 text-destructive font-bold animate-pulse">
                   ⚠ Expired — Refresh
@@ -321,8 +321,8 @@ const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => vo
               <Info className="w-3.5 h-3.5" /> How to copy cookies (one-time, lasts weeks)
             </div>
             <ol className="list-decimal list-inside space-y-1 ml-1 text-foreground/80">
-              <li>Open <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">http://145.239.130.45/ints/login</code> in Chrome and login normally (solve the math captcha)</li>
-              <li>Press <kbd className="px-1.5 py-0.5 rounded bg-black/40 border border-white/10 font-mono text-[10px]">F12</kbd> → <b>Application</b> tab → <b>Cookies</b> → click <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">http://145.239.130.45</code></li>
+              <li>Open <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">http://51.89.99.105/NumberPanel/agent/login</code> in Chrome and login normally (solve the math captcha)</li>
+              <li>Press <kbd className="px-1.5 py-0.5 rounded bg-black/40 border border-white/10 font-mono text-[10px]">F12</kbd> → <b>Application</b> tab → <b>Cookies</b> → click <code className="px-1 py-0.5 rounded bg-black/40 font-mono text-[11px]">http://51.89.99.105</code></li>
               <li>Select all rows (Ctrl+A) → right-click → <b>Copy</b>, OR use the <b>"EditThisCookie"</b> Chrome extension → export JSON</li>
               <li>Paste below and click Save. Bot restarts and skips captcha.</li>
               <li><b>Note:</b> The bot will auto-save fresh cookies the first time it logs in successfully via captcha — so you may not need to paste anything.</li>
@@ -374,11 +374,11 @@ const MsiCookiesEditor = ({ onSaved, cookieFailStreak = 0 }: { onSaved: () => vo
 };
 
 // ---- OTP poll interval setting ----
-const MsiOtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
+const NumPanelOtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
   const [saving, setSaving] = useState(false);
   const { data, refetch, isLoading } = useQuery({
-    queryKey: ["msi-otp-interval"],
-    queryFn: () => api.admin.msiOtpInterval(),
+    queryKey: ["numpanel-otp-interval"],
+    queryFn: () => api.admin.numpanelOtpInterval(),
   });
   const current = data?.interval_sec ?? 5;
   const opts = data?.options ?? [3, 5, 10, 30];
@@ -387,7 +387,7 @@ const MsiOtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
     if (sec === current) return;
     setSaving(true);
     try {
-      await api.admin.msiOtpIntervalSave(sec);
+      await api.admin.numpanelOtpIntervalSave(sec);
       toast.success(`OTP poll set to ${sec}s — bot restarting`);
       await refetch();
       onSaved();
@@ -430,151 +430,33 @@ const MsiOtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
   );
 };
 
-// ---- Manual paste-numbers (mirror IMS) ----
-const MsiManualPaste = ({ existingRanges, onAdded }: { existingRanges: string[]; onAdded: () => void }) => {
-  const [open, setOpen] = useState(false);
-  const [rangeMode, setRangeMode] = useState<"existing" | "new">("existing");
-  const [selectedRange, setSelectedRange] = useState("");
-  const [newRange, setNewRange] = useState("");
-  const [countryCode, setCountryCode] = useState("");
-  const [raw, setRaw] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const parsed = raw
-    .split(/[\s,;\n\r\t]+/)
-    .map(s => s.replace(/[^\d+]/g, "").replace(/^\++/, "+"))
-    .filter(s => s.replace(/\D/g, "").length >= 6);
-  const uniqueCount = new Set(parsed).size;
-
-  const submit = async () => {
-    const range = (rangeMode === "existing" ? selectedRange : newRange).trim();
-    if (!range) { toast.error("Range name required"); return; }
-    if (!parsed.length) { toast.error("Paste at least one valid number"); return; }
-    setSubmitting(true);
-    try {
-      const r = await api.msiAddPool({
-        numbers: Array.from(new Set(parsed)),
-        range,
-        country_code: countryCode.trim() || undefined,
-      });
-      toast.success(`Added ${r.added} numbers to "${r.range}"` +
-        (r.skipped ? ` · ${r.skipped} dup` : "") +
-        (r.invalid ? ` · ${r.invalid} invalid` : ""));
-      setRaw(""); setNewRange(""); setSelectedRange(""); setCountryCode("");
-      onAdded();
-    } catch (e) { toast.error("Add failed: " + (e as Error).message); }
-    finally { setSubmitting(false); }
-  };
-
-  return (
-    <div className="glass-card border border-white/[0.06] rounded-xl overflow-hidden">
-      <button onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-neon-magenta/10 border border-neon-magenta/20 flex items-center justify-center">
-            <ClipboardPaste className="w-4 h-4 text-neon-magenta" />
-          </div>
-          <div className="text-left">
-            <div className="text-sm font-semibold">Manual Paste — Add Numbers to MSI Pool</div>
-            <div className="text-xs text-muted-foreground">
-              Paste copied numbers from MSI panel, pick a range, instantly available to agents
-            </div>
-          </div>
-        </div>
-        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Open"}</span>
-      </button>
-
-      {open && (
-        <div className="border-t border-white/[0.06] p-5 space-y-4 bg-black/20">
-          <p className="text-xs text-muted-foreground flex items-start gap-2">
-            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-neon-magenta" />
-            Numbers are deduplicated against the current pool. Range name is what agents see in the dropdown.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground">Range</label>
-              <div className="flex gap-1 my-1.5">
-                <button type="button" onClick={() => setRangeMode("existing")} disabled={!existingRanges.length}
-                  className={cn("px-3 py-1 rounded text-xs font-semibold transition border",
-                    rangeMode === "existing"
-                      ? "bg-neon-magenta/15 border-neon-magenta/40 text-neon-magenta"
-                      : "bg-white/[0.03] border-white/[0.08] text-muted-foreground hover:text-foreground")}>
-                  Existing
-                </button>
-                <button type="button" onClick={() => setRangeMode("new")}
-                  className={cn("px-3 py-1 rounded text-xs font-semibold transition border inline-flex items-center gap-1",
-                    rangeMode === "new"
-                      ? "bg-neon-magenta/15 border-neon-magenta/40 text-neon-magenta"
-                      : "bg-white/[0.03] border-white/[0.08] text-muted-foreground hover:text-foreground")}>
-                  <Plus className="w-3 h-3" /> New
-                </button>
-              </div>
-              {rangeMode === "existing" ? (
-                <select value={selectedRange} onChange={e => setSelectedRange(e.target.value)}
-                  className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm focus:border-neon-magenta/50 outline-none">
-                  <option value="">— select existing range —</option>
-                  {existingRanges.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              ) : (
-                <input value={newRange} onChange={e => setNewRange(e.target.value)}
-                  placeholder="e.g. India Airtel TF01"
-                  className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono focus:border-neon-magenta/50 outline-none" />
-              )}
-            </div>
-            <div>
-              <label className="text-xs uppercase tracking-wider text-muted-foreground">Country Code (optional)</label>
-              <input value={countryCode} onChange={e => setCountryCode(e.target.value.toUpperCase())} maxLength={4}
-                placeholder="IN"
-                className="mt-1.5 w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono uppercase focus:border-neon-magenta/50 outline-none" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs uppercase tracking-wider text-muted-foreground">
-              Numbers — paste one per line, comma, or space ({uniqueCount} unique detected)
-            </label>
-            <textarea value={raw} onChange={e => setRaw(e.target.value)} rows={8} spellCheck={false}
-              placeholder={"+919876543210\n+919876543211\n..."}
-              className="mt-1.5 w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-sm font-mono focus:border-neon-magenta/50 outline-none resize-y" />
-          </div>
-          <div className="flex justify-end">
-            <button onClick={submit} disabled={submitting || !uniqueCount}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-xs font-semibold bg-neon-magenta/10 border border-neon-magenta/30 text-neon-magenta hover:bg-neon-magenta/20 transition disabled:opacity-50">
-              <Plus className={cn("w-3.5 h-3.5", submitting && "animate-pulse")} />
-              {submitting ? "Adding…" : `Add ${uniqueCount || ""} to pool`}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const AdminMsiStatus = () => {
+const AdminNumPanelStatus = () => {
   const [restarting, setRestarting] = useState(false);
   const [scraping, setScraping] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["msi-status"],
-    queryFn: () => api.admin.msiStatus(),
+    queryKey: ["numpanel-status"],
+    queryFn: () => api.admin.numpanelStatus(),
     refetchInterval: 5000,
   });
   const { data: poolData, refetch: refetchPool } = useQuery({
-    queryKey: ["msi-pool-breakdown"],
-    queryFn: () => api.admin.msiPoolBreakdown(),
+    queryKey: ["numpanel-pool-breakdown"],
+    queryFn: () => api.admin.numpanelPoolBreakdown(),
     refetchInterval: 10000,
   });
-  const s = data?.status as MsiStatus | undefined;
+  const s = data?.status as NumPanelStatusT | undefined;
 
   const handleAction = async (action: "restart" | "start" | "stop") => {
     const labels = { restart: "Restart", start: "Start", stop: "Stop" };
-    if (action === "stop" && !confirm("Stop the MSI bot?")) return;
-    if (action === "restart" && !confirm("Restart the MSI bot?")) return;
+    if (action === "stop" && !confirm("Stop the NumPanel bot?")) return;
+    if (action === "restart" && !confirm("Restart the NumPanel bot?")) return;
     setRestarting(true);
     try {
-      if (action === "restart") await api.admin.msiRestart();
-      else if (action === "start") await api.admin.msiStart();
-      else await api.admin.msiStop();
+      if (action === "restart") await api.admin.numpanelRestart();
+      else if (action === "start") await api.admin.numpanelStart();
+      else await api.admin.numpanelStop();
       toast.success(`${labels[action]} initiated`);
       setTimeout(() => refetch(), 1500);
     } catch (e) {
@@ -585,7 +467,7 @@ const AdminMsiStatus = () => {
   const handleScrapeNow = async () => {
     setScraping(true);
     try {
-      const r = await api.admin.msiScrapeNow();
+      const r = await api.admin.numpanelScrapeNow();
       if (r.ok) toast.success(`Scrape complete — ${r.otps ?? 0} OTPs delivered`);
       else toast.error(r.error || "Scrape failed");
       refetch(); refetchPool();
@@ -603,7 +485,7 @@ const AdminMsiStatus = () => {
     )) return;
     setSyncing(true);
     try {
-      const r = await api.admin.msiSyncLive();
+      const r = await api.admin.numpanelSyncLive();
       if (r.ok) {
         toast.success(`Live sync done: +${r.added ?? 0} added · -${r.removed ?? 0} removed · ${r.kept ?? 0} kept (${r.scraped ?? 0} live)`, { duration: 6000 });
       } else { toast.error(r.error || "Live sync failed"); }
@@ -618,8 +500,8 @@ const AdminMsiStatus = () => {
       <GradientMesh variant="default" />
       <PageHeader
         eyebrow="Workers"
-        title="MSI Bot Status"
-        description="Headless browser scraper for 145.239.130.45 — fast OTP delivery, no rate limits"
+        title="NumPanel Bot Status"
+        description="Hybrid bot for 51.89.99.105/NumberPanel — Puppeteer login + REST CDR API (instant OTPs, no cooldown)"
         icon={<Bot className="w-5 h-5 text-neon-cyan" />}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
@@ -668,7 +550,7 @@ const AdminMsiStatus = () => {
           </div>
 
           <LockReveal
-            title="MSI Login Credentials"
+            title="NumPanel Login Credentials"
             subtitle="Username, password & base URL — sensitive. Click reveal to view/edit."
             accent="neon-cyan"
             icon={<Layers className="w-4 h-4 text-neon-cyan" />}
@@ -677,17 +559,17 @@ const AdminMsiStatus = () => {
           </LockReveal>
 
           <LockReveal
-            title="MSI Session Cookies"
+            title="NumPanel Session Cookies"
             subtitle="Saved browser session — paste once, skip captcha forever. Sensitive."
             accent="neon-purple"
             icon={<ClipboardPaste className="w-4 h-4 text-neon-purple" />}
           >
-            <MsiCookiesEditor onSaved={() => refetch()} cookieFailStreak={s.cookieFailStreak || 0} />
+            <NumPanelCookiesEditor onSaved={() => refetch()} cookieFailStreak={s.cookieFailStreak || 0} />
           </LockReveal>
 
-          <MsiOtpIntervalSetting onSaved={() => refetch()} />
+          <NumPanelOtpIntervalSetting onSaved={() => refetch()} />
 
-          <MsiManualPaste
+          <NumPanelManualPaste
             existingRanges={poolData?.ranges?.map(r => r.name) ?? []}
             onAdded={() => { refetch(); refetchPool(); }}
           />
@@ -712,7 +594,7 @@ const AdminMsiStatus = () => {
                 />
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Bot will auto-stop if {s.emptyLimit} consecutive scrapes return zero numbers (set MSI_EMPTY_LIMIT env to enable; 0 = disabled).
+                Bot will auto-stop if {s.emptyLimit} consecutive scrapes return zero numbers (set NUMPANEL_EMPTY_LIMIT env to enable; 0 = disabled).
               </p>
             </div>
           )}
@@ -802,4 +684,4 @@ const AdminMsiStatus = () => {
   );
 };
 
-export default AdminMsiStatus;
+export default AdminNumPanelStatus;
