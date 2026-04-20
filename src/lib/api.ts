@@ -563,6 +563,34 @@ export const api = {
       request<{ ok: boolean }>("/admin/msi-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
     msiCookiesClear: () =>
       request<{ ok: boolean }>("/admin/msi-cookies", { method: "DELETE" }),
+
+    // ---- NumPanel Bot ----
+    numpanelStatus: () => request<{ status: any }>("/admin/numpanel-status"),
+    numpanelRestart: () => request<{ ok: boolean }>("/admin/numpanel-restart", { method: "POST" }),
+    numpanelStart: () => request<{ ok: boolean }>("/admin/numpanel-start", { method: "POST" }),
+    numpanelStop: () => request<{ ok: boolean }>("/admin/numpanel-stop", { method: "POST" }),
+    numpanelScrapeNow: () => request<{ ok: boolean; otps?: number; delivered?: number; error?: string }>("/admin/numpanel-scrape-now", { method: "POST" }),
+    numpanelSyncLive: () => request<{ ok: boolean; added?: number; removed?: number; kept?: number; scraped?: number; error?: string }>("/admin/numpanel-sync-live", { method: "POST" }),
+    numpanelPoolBreakdown: () => request<{ ranges: { name: string; count: number; last_added: number }[]; totalActive: number }>("/admin/numpanel-pool-breakdown"),
+    numpanelCredentials: () => request<{
+      enabled: boolean; base_url: string; username: string;
+      password_masked: string; has_password: boolean;
+      source: { username: string; password: string };
+    }>("/admin/numpanel-credentials"),
+    numpanelCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/numpanel-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    numpanelOtpInterval: () => request<{ interval_sec: number; source: string; options: number[]; min: number; max: number }>("/admin/numpanel-otp-interval"),
+    numpanelOtpIntervalSave: (interval_sec: number) =>
+      request<{ ok: boolean; interval_sec: number }>("/admin/numpanel-otp-interval", { method: "PUT", body: JSON.stringify({ interval_sec }) }),
+    numpanelApiToken: () => request<{ has_token: boolean; token_masked: string; api_base: string; source: string }>("/admin/numpanel-api-token"),
+    numpanelApiTokenSave: (body: { api_token?: string; api_base?: string }) =>
+      request<{ ok: boolean }>("/admin/numpanel-api-token", { method: "PUT", body: JSON.stringify(body) }),
+    numpanelCookiesStatus: () =>
+      request<{ has_cookies: boolean; count: number; saved_at: number | null }>("/admin/numpanel-cookies"),
+    numpanelCookiesSave: (cookies: string) =>
+      request<{ ok: boolean }>("/admin/numpanel-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
+    numpanelCookiesClear: () =>
+      request<{ ok: boolean }>("/admin/numpanel-cookies", { method: "DELETE" }),
   },
 
   // ===== Telegram Bot admin =====

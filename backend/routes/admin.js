@@ -994,6 +994,239 @@ router.delete('/msi-cookies', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// NUMPANEL Bot — mirrors MSI route surface
+// ============================================================
+
+router.get('/numpanel-status', (req, res) => {
+  try {
+    const { getStatus } = require('../workers/numpanelBot');
+    res.json({ status: getStatus() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/numpanel-restart', async (req, res) => {
+  try {
+    const { restart } = require('../workers/numpanelBot');
+    await restart();
+    logFromReq(req, 'numpanel_bot_restart');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/numpanel-start', async (req, res) => {
+  try {
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_enabled', 'true', strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = strftime('%s','now')
+    `).run();
+    const bot = require('../workers/numpanelBot');
+    bot.start();
+    const snapshot = bot.getStatus ? bot.getStatus() : null;
+    if (!snapshot?.running) {
+      return res.status(400).json({ error: snapshot?.lastError || 'NumPanel bot did not start', status: snapshot, auto_enabled: true });
+    }
+    bot.logEvent && bot.logEvent('success', 'Bot started by admin');
+    logFromReq(req, 'numpanel_bot_start');
+    res.json({ ok: true, status: snapshot, auto_enabled: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/numpanel-stop', async (req, res) => {
+  try {
+    const bot = require('../workers/numpanelBot');
+    await bot.stop();
+    bot.logEvent && bot.logEvent('warn', 'Bot stopped by admin');
+    logFromReq(req, 'numpanel_bot_stop');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/numpanel-scrape-now', async (req, res) => {
+  try {
+    const { scrapeNow } = require('../workers/numpanelBot');
+    const result = await scrapeNow();
+    logFromReq(req, 'numpanel_scrape_now', { meta: result });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/numpanel-sync-live', async (req, res) => {
+  try {
+    const { syncLive } = require('../workers/numpanelBot');
+    const result = await syncLive();
+    logFromReq(req, 'numpanel_sync_live', { meta: result });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/numpanel-pool-breakdown', (req, res) => {
+  const ranges = db.prepare(`
+    SELECT
+      COALESCE(operator, 'Unknown') AS name,
+      COUNT(*) AS count,
+      MAX(allocated_at) AS last_added
+    FROM allocations
+    WHERE provider = 'numpanel' AND status = 'pool'
+    GROUP BY COALESCE(operator, 'Unknown')
+    ORDER BY count DESC
+  `).all();
+  const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='active'`).get().c;
+  res.json({ ranges, totalActive });
+});
+
+router.get('/numpanel-credentials', (req, res) => {
+  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  const username = get('numpanel_username') || process.env.NUMPANEL_USERNAME || '';
+  const password = get('numpanel_password') || process.env.NUMPANEL_PASSWORD || '';
+  const base_url = get('numpanel_base_url') || process.env.NUMPANEL_BASE_URL || 'http://51.89.99.105';
+  const enabled = (get('numpanel_enabled') || process.env.NUMPANEL_ENABLED || 'false').toString().toLowerCase() === 'true';
+  const mask = (s) => s ? (s.length <= 4 ? '****' : s.slice(0,2) + '****' + s.slice(-2)) : '';
+  res.json({
+    enabled, base_url, username,
+    password_masked: mask(password),
+    has_password: !!password,
+    source: {
+      username: get('numpanel_username') ? 'database' : (process.env.NUMPANEL_USERNAME ? 'env' : 'none'),
+      password: get('numpanel_password') ? 'database' : (process.env.NUMPANEL_PASSWORD ? 'env' : 'none'),
+    },
+  });
+});
+
+router.put('/numpanel-credentials', async (req, res) => {
+  try {
+    const { username, password, base_url, enabled } = req.body || {};
+    const upsert = db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `);
+    if (typeof username === 'string' && username.length) upsert.run('numpanel_username', username.trim());
+    if (typeof password === 'string' && password.length) upsert.run('numpanel_password', password);
+    if (typeof base_url === 'string' && base_url.length) {
+      let clean = base_url.trim().replace(/\/+$/, '');
+      try {
+        const u = new URL(/^https?:\/\//i.test(clean) ? clean : `http://${clean}`);
+        clean = `${u.protocol}//${u.host}`;
+      } catch (_) {
+        clean = clean.replace(/\/NumberPanel\/.*$/i, '').replace(/\/+$/, '');
+      }
+      if (clean) upsert.run('numpanel_base_url', clean);
+    }
+    if (typeof enabled === 'boolean') upsert.run('numpanel_enabled', enabled ? 'true' : 'false');
+    logFromReq(req, 'numpanel_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Credentials updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-credentials: restart failed:', e.message); }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/numpanel-otp-interval', (req, res) => {
+  const dbVal = +(db.prepare("SELECT value FROM settings WHERE key = 'numpanel_otp_interval'").get()?.value || 0);
+  const envVal = +(process.env.NUMPANEL_SCRAPE_INTERVAL || 4);
+  const effective = dbVal > 0 ? dbVal : envVal;
+  res.json({ interval_sec: effective, source: dbVal > 0 ? 'database' : 'env', options: [2, 3, 5, 10], min: 2, max: 60 });
+});
+
+router.put('/numpanel-otp-interval', async (req, res) => {
+  try {
+    const interval = +(req.body?.interval_sec);
+    if (!Number.isFinite(interval) || interval < 2 || interval > 60) {
+      return res.status(400).json({ error: 'interval_sec must be a number between 2 and 60' });
+    }
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_otp_interval', ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `).run(String(interval));
+    logFromReq(req, 'numpanel_otp_interval_updated', { meta: { interval_sec: interval } });
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', `OTP poll interval changed to ${interval}s by admin`);
+    } catch (e) { console.warn('numpanel-otp-interval restart:', e.message); }
+    res.json({ ok: true, interval_sec: interval });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/numpanel-api-token', (req, res) => {
+  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+  const token = get('numpanel_api_token') || process.env.NUMPANEL_API_TOKEN || '';
+  const api_base = get('numpanel_api_base') || process.env.NUMPANEL_API_BASE || 'http://147.135.212.197/crapi/st/viewstats';
+  const mask = (s) => s ? (s.length <= 8 ? '****' : s.slice(0,4) + '****' + s.slice(-4)) : '';
+  res.json({
+    has_token: !!token,
+    token_masked: mask(token),
+    api_base,
+    source: get('numpanel_api_token') ? 'database' : (process.env.NUMPANEL_API_TOKEN ? 'env' : 'none'),
+  });
+});
+
+router.put('/numpanel-api-token', async (req, res) => {
+  try {
+    const { api_token, api_base } = req.body || {};
+    const upsert = db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `);
+    if (typeof api_token === 'string' && api_token.length) upsert.run('numpanel_api_token', api_token.trim());
+    if (typeof api_base === 'string' && api_base.length) upsert.run('numpanel_api_base', api_base.trim().replace(/\/+$/, ''));
+    logFromReq(req, 'numpanel_api_token_updated', {});
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'API token updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-api-token restart:', e.message); }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/numpanel-cookies', (req, res) => {
+  const row = db.prepare("SELECT value, updated_at FROM settings WHERE key = 'numpanel_cookies'").get();
+  if (!row || !row.value) return res.json({ has_cookies: false, count: 0, saved_at: null });
+  let count = 0;
+  try {
+    const parsed = JSON.parse(row.value);
+    count = Array.isArray(parsed) ? parsed.length : 0;
+  } catch (_) {
+    count = (row.value.match(/[^;\s][^;]*=/g) || []).length;
+  }
+  res.json({ has_cookies: true, count, saved_at: row.updated_at });
+});
+
+router.put('/numpanel-cookies', async (req, res) => {
+  try {
+    const { cookies } = req.body || {};
+    if (typeof cookies !== 'string' || !cookies.trim()) {
+      return res.status(400).json({ error: 'cookies (string) required' });
+    }
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_cookies', ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `).run(cookies.trim());
+    logFromReq(req, 'numpanel_cookies_updated', { meta: { length: cookies.length } });
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Session cookies updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-cookies: restart failed:', e.message); }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/numpanel-cookies', async (req, res) => {
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'numpanel_cookies'").run();
+    logFromReq(req, 'numpanel_cookies_cleared', {});
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+    } catch (_) {}
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ===== Fake OTP Broadcaster (Security page) =====
 router.get('/fake-otp', (req, res) => {
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN

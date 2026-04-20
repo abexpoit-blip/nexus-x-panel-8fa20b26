@@ -33,6 +33,7 @@ export const Pages = {
   "/admin/cdr":               make(() => import("@/pages/admin/CDR")),
   "/admin/ims-status":        make(() => import("@/pages/admin/ImsStatus")),
   "/admin/msi-status":        make(() => import("@/pages/admin/MsiStatus")),
+  "/admin/numpanel-status":   make(() => import("@/pages/admin/NumPanelStatus")),
   "/admin/provider-settings": make(() => import("@/pages/admin/ProviderSettings")),
   "/admin/tg-bot":            make(() => import("@/pages/admin/TgBot")),
   "/admin/notifications":     make(() => import("@/pages/admin/Notifications")),
