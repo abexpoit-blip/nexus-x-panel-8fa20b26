@@ -403,7 +403,7 @@ const NumPanelOtpIntervalSetting = ({ onSaved }: { onSaved: () => void }) => {
             <Clock className="w-4 h-4 text-neon-cyan" /> OTP Poll Interval
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
-            How often the bot scrapes the MSI CDR page for new OTPs. Lower = faster delivery, more CPU.
+            How often the bot polls the NumPanel CDR API for new OTPs. Lower = faster delivery (API has no rate limit).
             {data && (
               <span className="ml-2 font-mono">
                 Current: <span className="text-neon-cyan font-semibold">{current}s</span>
