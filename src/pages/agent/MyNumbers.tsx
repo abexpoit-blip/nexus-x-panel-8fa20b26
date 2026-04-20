@@ -38,12 +38,28 @@ const AgentMyNumbers = () => {
 
   const rows = useMemo(() => {
     const all = data?.numbers || [];
-    return all.filter((n) => {
-      if (status !== "all" && n.status !== status) return false;
-      if (q && !n.phone_number.toLowerCase().includes(q.toLowerCase())) return false;
-      return true;
-    });
+    return all
+      .filter((n) => {
+        if (status !== "all" && n.status !== status) return false;
+        if (q && !n.phone_number.toLowerCase().includes(q.toLowerCase())) return false;
+        return true;
+      })
+      // Newest OTP first: sort by otp_received_at desc, fallback to allocated_at
+      .slice()
+      .sort((a, b) => {
+        const ta = (a as any).otp_received_at || a.allocated_at || 0;
+        const tb = (b as any).otp_received_at || b.allocated_at || 0;
+        return tb - ta;
+      });
   }, [data, q, status]);
+
+  // Tick state to re-evaluate "fresh" highlight every 5s without refetching
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 5000);
+    return () => clearInterval(id);
+  }, []);
+  const FRESH_WINDOW_SEC = 60; // highlight OTPs received in last 60s
 
   return (
     <div className="space-y-6">
