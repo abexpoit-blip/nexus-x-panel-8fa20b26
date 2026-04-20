@@ -181,9 +181,9 @@ router.get('/config', (req, res) => {
   const rows = db.prepare(`SELECT key, value FROM settings WHERE key IN (${keys.map(() => '?').join(',')})`).all(...keys);
   const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   res.json({
-    tg_public_channel: settings.tg_public_channel || '',
-    tg_required_group: settings.tg_required_group || 'https://t.me/nexusxotpbot',
-    tg_required_group_chat: settings.tg_required_group_chat || '',
+    tg_public_channel: settings.tg_public_channel || '@nexusxotpgroup',
+    tg_required_group: settings.tg_required_group || 'https://t.me/nexusxotpgroup',
+    tg_required_group_chat: settings.tg_required_group_chat || '@nexusxotpgroup',
     tg_required_otp_group: settings.tg_required_otp_group || 'https://t.me/+6RUOKrkz6YU1Yjk1',
     tg_required_otp_group_chat: settings.tg_required_otp_group_chat || '',
     tg_terms_text: settings.tg_terms_text || 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',

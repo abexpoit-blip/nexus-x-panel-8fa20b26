@@ -26,8 +26,15 @@ function getPublicChannelId() {
   try {
     const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_public_channel'").get()?.value;
     if (!v) return null;
-    const n = String(v).trim();
-    return n || null;
+    let n = String(v).trim();
+    if (!n) return null;
+    // Accept @username, plain username, https://t.me/username, or numeric -100… chat id
+    if (n.startsWith('https://t.me/')) n = n.replace('https://t.me/', '');
+    if (n.startsWith('http://t.me/')) n = n.replace('http://t.me/', '');
+    if (/^-?\d+$/.test(n)) return n;            // numeric chat id
+    if (n.startsWith('@')) return n;            // @channelusername
+    if (n.startsWith('+')) return null;         // private invite hash — needs numeric id, can't post
+    return '@' + n;                             // bare username → prepend @
   } catch { return null; }
 }
 
@@ -39,24 +46,36 @@ function getBotConfig() {
     `).all();
     const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     return {
-      publicChannel: map.tg_public_channel || '',
-      requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpbot',
-      requiredGroupChat: map.tg_required_group_chat || '',
+      publicChannel: map.tg_public_channel || '@nexusxotpgroup',
+      requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpgroup',
+      requiredGroupChat: map.tg_required_group_chat || '@nexusxotpgroup',
       otpGroup: map.tg_required_otp_group || 'https://t.me/+6RUOKrkz6YU1Yjk1',
       otpGroupChat: map.tg_required_otp_group_chat || '',
       terms: map.tg_terms_text || 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   } catch {
     return {
-      publicChannel: '',
-      requiredGroup: 'https://t.me/nexusxotpbot',
-      requiredGroupChat: '',
+      publicChannel: '@nexusxotpgroup',
+      requiredGroup: 'https://t.me/nexusxotpgroup',
+      requiredGroupChat: '@nexusxotpgroup',
       otpGroup: 'https://t.me/+6RUOKrkz6YU1Yjk1',
       otpGroupChat: '',
       terms: 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   }
 }
+
+// Seed the public channel on boot if admin hasn't set it yet — so fake-OTP works out of the box
+function seedDefaults() {
+  try {
+    const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at)
+      VALUES (?, ?, strftime('%s','now'))`);
+    stmt.run('tg_public_channel', '@nexusxotpgroup');
+    stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
+    stmt.run('tg_required_group_chat', '@nexusxotpgroup');
+  } catch (e) { console.warn('[seedDefaults]', e.message); }
+}
+seedDefaults();
 
 const bot = new Telegraf(TOKEN);
 
@@ -967,11 +986,16 @@ async function fakeOtpBroadcastTick() {
             `${flagOf(cc)} ${escapeHtml(countryName(cc))} • ${serviceIcon(row.service)} ${escapeHtml(row.range_name || row.service || 'OTP')}`,
             { parse_mode: 'HTML' }
           );
-        } catch (e) { console.warn('[fake-otp] tg post fail:', e.message); }
+        } catch (e) {
+          console.error(`[fake-otp] tg post FAIL channel=${channelId} err=${e.message} (description=${e.description || '—'}). ` +
+            `Hint: bot must be ADMIN of the channel and channel must be public OR you must use the numeric -100… chat id.`);
+        }
         await new Promise(r => setTimeout(r, 600));
+      } else {
+        console.warn('[fake-otp] no public channel configured — set tg_public_channel in settings (e.g. @nexusxotpgroup or -1001234567890)');
       }
     }
-    console.log(`[fake-otp] burst sent: ${samples.length} (channel=${channelId ? 'yes' : 'no'})`);
+    console.log(`[fake-otp] burst sent: ${samples.length} (channel=${channelId || 'NONE'})`);
   } catch (e) {
     console.error('[fake-otp] tick error:', e.message);
   } finally {
