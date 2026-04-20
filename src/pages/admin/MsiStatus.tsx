@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { RangePoolGrid } from "@/components/admin/RangePoolGrid";
 import { GradientMesh, PageHeader } from "@/components/premium";
 import {
   Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText,
@@ -747,21 +748,13 @@ const AdminMsiStatus = () => {
               </div>
             </div>
 
-            <div className="glass-card border border-white/[0.06] rounded-xl p-5 space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Pool by Range</h3>
-              {poolData?.ranges?.length ? (
-                <div className="space-y-1.5 max-h-64 overflow-y-auto scrollbar-none pr-1">
-                  {poolData.ranges.map(r => (
-                    <div key={r.name} className="flex items-center justify-between text-sm py-1 border-b border-white/[0.04]">
-                      <span className="font-mono text-xs text-muted-foreground truncate">{r.name}</span>
-                      <span className="font-mono font-bold text-neon-cyan">{r.count}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">Pool empty — start the bot or run Sync Live</p>
-              )}
-            </div>
+            <RangePoolGrid
+              ranges={poolData?.ranges || []}
+              totalActive={poolData?.totalActive || 0}
+              totalUsed={poolData?.totalUsed || 0}
+              provider="msi"
+              onChanged={() => refetchPool()}
+            />
           </div>
 
           {s.lastError && (

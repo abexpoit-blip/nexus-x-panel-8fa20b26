@@ -415,16 +415,21 @@ router.get('/ims-numbers-job', (req, res) => {
 router.get('/ims-pool-breakdown', (req, res) => {
   const ranges = db.prepare(`
     SELECT
-      COALESCE(operator, 'Unknown') AS name,
+      COALESCE(a.operator, 'Unknown') AS name,
       COUNT(*) AS count,
-      MAX(allocated_at) AS last_added
-    FROM allocations
-    WHERE provider = 'ims' AND status = 'pool'
-    GROUP BY COALESCE(operator, 'Unknown')
-    ORDER BY count DESC
+      MAX(a.allocated_at) AS last_added,
+      MIN(a.allocated_at) AS first_added,
+      m.custom_name, m.tag_color, m.priority,
+      m.request_override, m.notes, m.disabled, m.service_tag
+    FROM allocations a
+    LEFT JOIN ims_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
+    WHERE a.provider = 'ims' AND a.status = 'pool'
+    GROUP BY COALESCE(a.operator, 'Unknown')
+    ORDER BY COALESCE(m.priority, 0) DESC, count DESC
   `).all();
   const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active'`).get().c;
-  res.json({ ranges, totalActive });
+  const totalUsed = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='used'`).get().c;
+  res.json({ ranges, totalActive, totalUsed });
 });
 
 // POST /api/admin/ims-pool-cleanup — manually purge old/invalid numbers from the pool.
@@ -857,16 +862,21 @@ router.post('/msi-sync-live', async (req, res) => {
 router.get('/msi-pool-breakdown', (req, res) => {
   const ranges = db.prepare(`
     SELECT
-      COALESCE(operator, 'Unknown') AS name,
+      COALESCE(a.operator, 'Unknown') AS name,
       COUNT(*) AS count,
-      MAX(allocated_at) AS last_added
-    FROM allocations
-    WHERE provider = 'msi' AND status = 'pool'
-    GROUP BY COALESCE(operator, 'Unknown')
-    ORDER BY count DESC
+      MAX(a.allocated_at) AS last_added,
+      MIN(a.allocated_at) AS first_added,
+      m.custom_name, m.tag_color, m.priority,
+      m.request_override, m.notes, m.disabled, m.service_tag
+    FROM allocations a
+    LEFT JOIN msi_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
+    WHERE a.provider = 'msi' AND a.status = 'pool'
+    GROUP BY COALESCE(a.operator, 'Unknown')
+    ORDER BY COALESCE(m.priority, 0) DESC, count DESC
   `).all();
   const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='msi' AND status='active'`).get().c;
-  res.json({ ranges, totalActive });
+  const totalUsed = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='msi' AND status='used'`).get().c;
+  res.json({ ranges, totalActive, totalUsed });
 });
 
 router.get('/msi-credentials', (req, res) => {
@@ -1067,11 +1077,8 @@ router.get('/numpanel-pool-breakdown', (req, res) => {
       COUNT(*) AS count,
       MAX(a.allocated_at) AS last_added,
       MIN(a.allocated_at) AS first_added,
-      m.custom_name AS custom_name,
-      m.tag_color   AS tag_color,
-      m.priority    AS priority,
-      m.request_override AS request_override,
-      m.notes       AS notes
+      m.custom_name, m.tag_color, m.priority,
+      m.request_override, m.notes, m.disabled, m.service_tag
     FROM allocations a
     LEFT JOIN numpanel_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
     WHERE a.provider = 'numpanel' AND a.status = 'pool'
@@ -1083,44 +1090,62 @@ router.get('/numpanel-pool-breakdown', (req, res) => {
   res.json({ ranges, totalActive, totalUsed });
 });
 
-// ---- NumPanel range metadata (custom names, colors, priority) ----
-router.get('/numpanel-range-meta', (req, res) => {
-  const rows = db.prepare(`SELECT * FROM numpanel_range_meta ORDER BY priority DESC, range_prefix`).all();
-  res.json({ ranges: rows });
-});
+// ---- Generic Range Metadata Routes (numpanel | ims | msi) ----
+const RANGE_META_TABLES = {
+  numpanel: 'numpanel_range_meta',
+  ims: 'ims_range_meta',
+  msi: 'msi_range_meta',
+};
+const VALID_SERVICE_TAGS = new Set(['facebook', 'whatsapp', 'telegram', 'instagram', 'twitter', 'tiktok', 'google', 'other', null, '']);
 
-router.put('/numpanel-range-meta', (req, res) => {
-  const { range_prefix, custom_name, tag_color, priority, request_override, notes } = req.body || {};
-  if (!range_prefix || typeof range_prefix !== 'string') {
-    return res.status(400).json({ error: 'range_prefix required' });
-  }
-  db.prepare(`
-    INSERT INTO numpanel_range_meta (range_prefix, custom_name, tag_color, priority, request_override, notes, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'))
-    ON CONFLICT(range_prefix) DO UPDATE SET
-      custom_name      = COALESCE(excluded.custom_name, numpanel_range_meta.custom_name),
-      tag_color        = COALESCE(excluded.tag_color, numpanel_range_meta.tag_color),
-      priority         = COALESCE(excluded.priority, numpanel_range_meta.priority),
-      request_override = COALESCE(excluded.request_override, numpanel_range_meta.request_override),
-      notes            = COALESCE(excluded.notes, numpanel_range_meta.notes),
-      updated_at       = strftime('%s','now')
-  `).run(
-    range_prefix.trim(),
-    typeof custom_name === 'string' ? custom_name.trim() : null,
-    typeof tag_color === 'string' ? tag_color.trim() : null,
-    Number.isFinite(+priority) ? +priority : null,
-    Number.isFinite(+request_override) ? +request_override : null,
-    typeof notes === 'string' ? notes.trim() : null,
-  );
-  logFromReq(req, 'numpanel_range_meta_set', { meta: req.body });
-  res.json({ ok: true });
-});
-
-router.delete('/numpanel-range-meta/:prefix', (req, res) => {
-  db.prepare(`DELETE FROM numpanel_range_meta WHERE range_prefix = ?`).run(req.params.prefix);
-  logFromReq(req, 'numpanel_range_meta_delete', { meta: { prefix: req.params.prefix } });
-  res.json({ ok: true });
-});
+function rangeMetaRoutes(provider) {
+  const table = RANGE_META_TABLES[provider];
+  router.get(`/${provider}-range-meta`, (req, res) => {
+    const rows = db.prepare(`SELECT * FROM ${table} ORDER BY priority DESC, range_prefix`).all();
+    res.json({ ranges: rows });
+  });
+  router.put(`/${provider}-range-meta`, (req, res) => {
+    const { range_prefix, custom_name, tag_color, priority, request_override, notes, disabled, service_tag } = req.body || {};
+    if (!range_prefix || typeof range_prefix !== 'string') {
+      return res.status(400).json({ error: 'range_prefix required' });
+    }
+    if (service_tag !== undefined && !VALID_SERVICE_TAGS.has(service_tag)) {
+      return res.status(400).json({ error: `invalid service_tag — allowed: ${[...VALID_SERVICE_TAGS].filter(Boolean).join(', ')}` });
+    }
+    db.prepare(`
+      INSERT INTO ${table} (range_prefix, custom_name, tag_color, priority, request_override, notes, disabled, service_tag, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
+      ON CONFLICT(range_prefix) DO UPDATE SET
+        custom_name      = COALESCE(excluded.custom_name, ${table}.custom_name),
+        tag_color        = COALESCE(excluded.tag_color, ${table}.tag_color),
+        priority         = COALESCE(excluded.priority, ${table}.priority),
+        request_override = COALESCE(excluded.request_override, ${table}.request_override),
+        notes            = COALESCE(excluded.notes, ${table}.notes),
+        disabled         = COALESCE(excluded.disabled, ${table}.disabled),
+        service_tag      = COALESCE(excluded.service_tag, ${table}.service_tag),
+        updated_at       = strftime('%s','now')
+    `).run(
+      range_prefix.trim(),
+      typeof custom_name === 'string' ? custom_name.trim() : null,
+      typeof tag_color === 'string' ? tag_color.trim() : null,
+      Number.isFinite(+priority) ? +priority : null,
+      Number.isFinite(+request_override) ? +request_override : null,
+      typeof notes === 'string' ? notes.trim() : null,
+      typeof disabled === 'boolean' ? (disabled ? 1 : 0) : (disabled === 1 || disabled === 0 ? disabled : null),
+      typeof service_tag === 'string' ? service_tag.trim().toLowerCase() : null,
+    );
+    logFromReq(req, `${provider}_range_meta_set`, { meta: req.body });
+    res.json({ ok: true });
+  });
+  router.delete(`/${provider}-range-meta/:prefix`, (req, res) => {
+    db.prepare(`DELETE FROM ${table} WHERE range_prefix = ?`).run(req.params.prefix);
+    logFromReq(req, `${provider}_range_meta_delete`, { meta: { prefix: req.params.prefix } });
+    res.json({ ok: true });
+  });
+}
+rangeMetaRoutes('numpanel');
+rangeMetaRoutes('ims');
+rangeMetaRoutes('msi');
 
 router.get('/numpanel-credentials', (req, res) => {
   const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
