@@ -10,7 +10,15 @@ import { Wallet, ArrowDownToLine, Send } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_POLICY = { min_amount: 500, fee_percent: 2, sla_hours: 24 };
+const DEFAULT_POLICY = {
+  min_amount: 500, fee_percent: 2, sla_hours: 24,
+  methods_enabled: ["bkash", "nagad", "rocket", "bank", "crypto"] as string[],
+  methods: { bkash: true, nagad: true, rocket: true, bank: true, crypto: true } as Record<string, boolean>,
+};
+
+const METHOD_LABELS: Record<string, string> = {
+  bkash: "bKash", nagad: "Nagad", rocket: "Rocket", bank: "Bank Transfer", crypto: "Crypto (USDT)",
+};
 
 const statusBadge = (s: string) => cn(
   "px-2 py-0.5 rounded text-xs font-semibold uppercase",
