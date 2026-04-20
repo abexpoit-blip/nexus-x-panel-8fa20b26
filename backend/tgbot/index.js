@@ -41,14 +41,18 @@ function getBotConfig() {
     return {
       publicChannel: map.tg_public_channel || '',
       requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpbot',
+      requiredGroupChat: map.tg_required_group_chat || '',
       otpGroup: map.tg_required_otp_group || 'https://t.me/+6RUOKrkz6YU1Yjk1',
+      otpGroupChat: map.tg_required_otp_group_chat || '',
       terms: map.tg_terms_text || 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   } catch {
     return {
       publicChannel: '',
       requiredGroup: 'https://t.me/nexusxotpbot',
+      requiredGroupChat: '',
       otpGroup: 'https://t.me/+6RUOKrkz6YU1Yjk1',
+      otpGroupChat: '',
       terms: 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   }
@@ -170,13 +174,31 @@ function markOnboarded(tgUserId) {
   db.prepare('UPDATE tg_users SET notes = ? WHERE tg_user_id = ?').run(next, tgUserId);
 }
 
-function ensureBotReady(ctx, tgUser) {
+async function verifyRequiredMembership(ctx) {
+  const cfg = getBotConfig();
+  const checks = [
+    { chatId: cfg.requiredGroupChat, label: 'public group' },
+    { chatId: cfg.otpGroupChat, label: 'OTP history group' },
+  ].filter((x) => x.chatId);
+  if (checks.length === 0) return true;
+  for (const check of checks) {
+    try {
+      const member = await bot.telegram.getChatMember(check.chatId, ctx.from.id);
+      if (!['creator', 'administrator', 'member'].includes(member.status)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function ensureBotReady(ctx, tgUser) {
   if (isBanned(tgUser)) {
-    ctx.reply('🚫 You have been banned from using this bot.');
+    await ctx.reply('🚫 You have been banned from using this bot.');
     return false;
   }
   if (!isOnboarded(tgUser.tg_user_id)) {
-    ctx.replyWithHTML(firstTimeWelcomeText(tgUser), onboardingKeyboard());
+    await ctx.replyWithHTML(firstTimeWelcomeText(tgUser), onboardingKeyboard());
     return false;
   }
   return true;
@@ -386,9 +408,13 @@ bot.action('onboard:check', async (ctx) => {
 });
 
 bot.action('onboard:accept', async (ctx) => {
-  await ctx.answerCbQuery('Verified');
+  await ctx.answerCbQuery();
   const u = ensureTgUser(ctx);
   if (!u) return;
+  const verified = await verifyRequiredMembership(ctx);
+  if (!verified) {
+    return ctx.replyWithHTML('⚠️ <b>Join verification failed.</b>\nPlease join both required groups first, then tap verify again.', onboardingKeyboard());
+  }
   markOnboarded(u.tg_user_id);
   await ctx.replyWithHTML(`✅ <b>Verification complete.</b>\nYou can use the bot now.`, mainMenuKeyboard());
 });
