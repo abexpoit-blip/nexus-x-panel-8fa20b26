@@ -351,6 +351,12 @@ async function login() {
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      // Ensure browser+page exist; if a previous attempt detached the frame, recycle.
+      if (!browser || !page || page.isClosed?.()) {
+        try { await browser?.close(); } catch (_) {}
+        browser = null; page = null;
+        await ensureBrowser();
+      }
       await loginOnce();
       if (attempt > 1) logEvent('success', `Login OK on attempt ${attempt}`);
       // Save fresh cookies so next restart skips captcha
