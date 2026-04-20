@@ -555,16 +555,24 @@ async function scrapeNumbers() {
     return []; // pool fill disabled
   }
 
-  // Read per-range request_override from numpanel_range_meta
+  // Read per-range request_override + disabled from numpanel_range_meta
   let overrideMap = new Map();
+  let disabledSet = new Set();
   try {
     const rows = db.prepare(
-      `SELECT range_prefix, request_override FROM numpanel_range_meta WHERE request_override IS NOT NULL`
+      `SELECT range_prefix, request_override, disabled FROM numpanel_range_meta`
     ).all();
-    for (const row of rows) overrideMap.set(row.range_prefix, +row.request_override);
+    for (const row of rows) {
+      if (row.request_override != null) overrideMap.set(row.range_prefix, +row.request_override);
+      if (row.disabled) disabledSet.add(row.range_prefix);
+    }
   } catch (_) { /* table may not exist on first boot */ }
 
   for (const rr of rangeRows.slice(0, 50)) { // safety cap
+    if (disabledSet.has(rr.range)) {
+      dlog(`[numpanel-bot] skip DISABLED range: ${rr.range}`);
+      continue;
+    }
     const perRangeMax = overrideMap.has(rr.range)
       ? Math.max(0, overrideMap.get(rr.range))
       : REQUEST_PER_RANGE;
