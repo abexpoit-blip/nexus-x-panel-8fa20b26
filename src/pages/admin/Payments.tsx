@@ -97,7 +97,7 @@ const AdminPayments = () => {
       </div>
 
       <Tabs defaultValue="approvals" className="w-full">
-        <TabsList className="bg-white/[0.04]">
+        <TabsList className="bg-white/[0.04] flex-wrap h-auto">
           <TabsTrigger value="approvals">
             Approval Queue {pending.length > 0 && (
               <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] bg-neon-amber/20 text-neon-amber">{pending.length}</span>
@@ -106,6 +106,9 @@ const AdminPayments = () => {
           <TabsTrigger value="withdrawals">All Withdrawals</TabsTrigger>
           <TabsTrigger value="topup">Top-up Agent</TabsTrigger>
           <TabsTrigger value="ledger">Ledger</TabsTrigger>
+          <TabsTrigger value="config">
+            <SettingsIcon className="w-3.5 h-3.5 mr-1.5" /> Config
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="approvals" className="mt-4">
