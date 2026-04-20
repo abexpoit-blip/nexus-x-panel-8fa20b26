@@ -564,6 +564,76 @@ export const api = {
     msiCookiesClear: () =>
       request<{ ok: boolean }>("/admin/msi-cookies", { method: "DELETE" }),
   },
+
+  // ===== Telegram Bot admin =====
+  tgbot: {
+    status: () => request<{
+      totalUsers: number; activeUsers: number; onlineUsers: number;
+      todayOtps: number; activeNumbers: number; totalDelivered: number;
+      enabledRanges: number; totalRevenue: number;
+    }>("/admin/tgbot/status"),
+    users: (params: { page?: number; page_size?: number; q?: string } = {}) => {
+      const qs = new URLSearchParams();
+      if (params.page) qs.set("page", String(params.page));
+      if (params.page_size) qs.set("page_size", String(params.page_size));
+      if (params.q) qs.set("q", params.q);
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      return request<{
+        rows: Array<{
+          tg_user_id: number; username: string | null; first_name: string | null;
+          balance_bdt: number; total_otps: number; total_spent: number;
+          status: string; created_at: number; last_seen_at: number;
+        }>;
+        page: number; page_size: number; total: number; total_pages: number;
+      }>(`/admin/tgbot/users${suffix}`);
+    },
+    topup: (id: number, amount: number, note?: string) =>
+      request<{ ok: boolean }>(`/admin/tgbot/users/${id}/topup`, {
+        method: "POST", body: JSON.stringify({ amount, note }),
+      }),
+    ban: (id: number, ban: boolean) =>
+      request<{ ok: boolean }>(`/admin/tgbot/users/${id}/ban`, {
+        method: "POST", body: JSON.stringify({ ban }),
+      }),
+    rangeSettings: () => request<{
+      ranges: Array<{
+        provider: string; range_name: string; country_code: string | null;
+        pool_count: number; tg_enabled: boolean; tg_rate_bdt: number;
+        service: string | null;
+      }>;
+    }>("/admin/tgbot/range-settings"),
+    updateRange: (body: {
+      provider: string; range_name: string; tg_enabled: boolean;
+      tg_rate_bdt: number; service?: string;
+    }) => request<{ ok: boolean }>("/admin/tgbot/range-settings", {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+    bulkRange: (body: {
+      provider: string; country_code?: string; tg_enabled: boolean;
+      tg_rate_bdt?: number; service?: string;
+    }) => request<{ ok: boolean; updated: number }>("/admin/tgbot/range-settings/bulk", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+    otpFeed: (limit = 50) => request<{
+      rows: Array<{
+        id: number; tg_user_id: number; tg_username: string | null;
+        phone_number: string; country_code: string | null; range_name: string;
+        service: string | null; otp_code: string; otp_received_at: number;
+        rate_bdt: number;
+      }>;
+    }>(`/admin/tgbot/otp-feed?limit=${limit}`),
+    broadcast: (message: string) =>
+      request<{ ok: boolean; id: number }>("/admin/tgbot/broadcast", {
+        method: "POST", body: JSON.stringify({ message }),
+      }),
+    broadcasts: () => request<{
+      broadcasts: Array<{
+        id: number; message: string; status: string; sent_count: number;
+        failed_count: number; created_at: number; finished_at: number | null;
+        admin_username: string | null;
+      }>;
+    }>("/admin/tgbot/broadcasts"),
+  },
 };
 
 export interface PaymentConfig {
