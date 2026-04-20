@@ -571,7 +571,31 @@ export const api = {
     numpanelStop: () => request<{ ok: boolean }>("/admin/numpanel-stop", { method: "POST" }),
     numpanelScrapeNow: () => request<{ ok: boolean; otps?: number; delivered?: number; error?: string }>("/admin/numpanel-scrape-now", { method: "POST" }),
     numpanelSyncLive: () => request<{ ok: boolean; added?: number; removed?: number; kept?: number; scraped?: number; error?: string }>("/admin/numpanel-sync-live", { method: "POST" }),
-    numpanelPoolBreakdown: () => request<{ ranges: { name: string; count: number; last_added: number }[]; totalActive: number }>("/admin/numpanel-pool-breakdown"),
+    numpanelPoolBreakdown: () => request<{
+      ranges: {
+        name: string;
+        count: number;
+        last_added: number;
+        first_added: number;
+        custom_name: string | null;
+        tag_color: string | null;
+        priority: number | null;
+        request_override: number | null;
+        notes: string | null;
+      }[];
+      totalActive: number;
+      totalUsed: number;
+    }>("/admin/numpanel-pool-breakdown"),
+    numpanelRangeMetaSave: (body: {
+      range_prefix: string;
+      custom_name?: string | null;
+      tag_color?: string | null;
+      priority?: number | null;
+      request_override?: number | null;
+      notes?: string | null;
+    }) => request<{ ok: boolean }>("/admin/numpanel-range-meta", { method: "PUT", body: JSON.stringify(body) }),
+    numpanelRangeMetaDelete: (prefix: string) =>
+      request<{ ok: boolean }>(`/admin/numpanel-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
     numpanelCredentials: () => request<{
       enabled: boolean; base_url: string; username: string;
       password_masked: string; has_password: boolean;
