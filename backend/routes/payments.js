@@ -2,13 +2,9 @@ const express = require('express');
 const db = require('../lib/db');
 const { authRequired, adminOnly } = require('../middleware/auth');
 const { logFromReq } = require('../lib/audit');
+const { getPaymentConfig, savePaymentConfig, ALL_METHODS } = require('../lib/settings');
 
 const router = express.Router();
-
-// Withdrawal policy (kept in code for now; can be moved to settings table later)
-const WD_MIN = 500;          // ৳ minimum
-const WD_FEE_PERCENT = 2;    // 2% service fee
-const WD_SLA_HOURS = 24;     // processing SLA
 
 // GET /api/payments — admin sees all
 router.get('/', authRequired, adminOnly, (req, res) => {
