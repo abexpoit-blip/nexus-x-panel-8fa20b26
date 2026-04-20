@@ -5,11 +5,23 @@ const { logFromReq } = require('../lib/audit');
 
 const router = express.Router();
 
+// Helper — when fake-OTP toggle is OFF, hide the broadcast rows from CDR/feed
+// (they remain in DB so toggling back ON instantly restores history view).
+function fakeBroadcastEnabled() {
+  try {
+    return db.prepare("SELECT value FROM settings WHERE key='fake_otp_enabled'").get()?.value === 'true';
+  } catch { return false; }
+}
+function fakeFilterClause() {
+  return fakeBroadcastEnabled() ? '' : "AND (c.note IS NULL OR c.note != 'fake:broadcast')";
+}
+
 // GET /api/cdr — admin sees all
 router.get('/', authRequired, adminOnly, (req, res) => {
   const cdr = db.prepare(`
     SELECT c.*, u.username FROM cdr c
     LEFT JOIN users u ON u.id = c.user_id
+    WHERE 1=1 ${fakeFilterClause()}
     ORDER BY c.created_at DESC LIMIT 1000
   `).all();
   res.json({ cdr });
@@ -18,8 +30,9 @@ router.get('/', authRequired, adminOnly, (req, res) => {
 // GET /api/cdr/mine — agent sees own
 router.get('/mine', authRequired, (req, res) => {
   const cdr = db.prepare(`
-    SELECT * FROM cdr WHERE user_id = ?
-    ORDER BY created_at DESC LIMIT 500
+    SELECT c.* FROM cdr c
+    WHERE c.user_id = ? ${fakeFilterClause()}
+    ORDER BY c.created_at DESC LIMIT 500
   `).all(req.user.id);
   res.json({ cdr });
 });
@@ -31,9 +44,9 @@ router.get('/mine', authRequired, (req, res) => {
 router.get('/feed', authRequired, (req, res) => {
   const rows = db.prepare(`
     SELECT id, phone_number, otp_code, operator, country_code, cli,
-           provider, price_bdt, created_at
-    FROM cdr
-    WHERE otp_code IS NOT NULL
+           provider, price_bdt, created_at, note
+    FROM cdr c
+    WHERE otp_code IS NOT NULL ${fakeFilterClause()}
     ORDER BY created_at DESC
     LIMIT 200
   `).all();

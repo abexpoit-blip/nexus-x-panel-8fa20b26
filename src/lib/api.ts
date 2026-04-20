@@ -652,6 +652,18 @@ export const api = {
       method: "PUT", body: JSON.stringify(body),
     }),
   },
+
+  // ===== Fake OTP Broadcaster (Security page) =====
+  fakeOtp: {
+    get: () => request<{
+      enabled: boolean; min_sec: number; max_sec: number; burst: number;
+    }>("/admin/fake-otp"),
+    save: (body: { enabled?: boolean; min_sec?: number; max_sec?: number; burst?: number }) =>
+      request<{ ok: boolean }>("/admin/fake-otp", {
+        method: "PUT", body: JSON.stringify(body),
+      }),
+    purge: () => request<{ ok: boolean; removed: number }>("/admin/fake-otp/purge", { method: "POST" }),
+  },
 };
 
 export interface PaymentConfig {
