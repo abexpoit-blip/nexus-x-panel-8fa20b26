@@ -124,6 +124,31 @@ let emptyStreak = 0;
 let _cookieFailStreak = 0;
 let _lastCookieExpiryAlertAt = 0;
 
+async function disableAfterLoginFailure(message) {
+  const current = +(readSetting('numpanel_login_fail_count') || 0);
+  const next = current + 1;
+  writeSetting('numpanel_login_fail_count', next);
+  console.warn(`[numpanel-bot] consecutive login failures: ${next}/${LOGIN_FAIL_DISABLE_AFTER}`);
+  if (next < LOGIN_FAIL_DISABLE_AFTER) return false;
+
+  writeSetting('numpanel_enabled', '0');
+  try { db.prepare(`DELETE FROM settings WHERE key = 'numpanel_login_fail_count'`).run(); } catch (_) {}
+  console.error(`[numpanel-bot] ✗ AUTO-DISABLED after login failure — ${message || 're-enable from admin panel after fixing login/cookies'}`);
+  logEvent('error', 'Auto-disabled after login failure (circuit breaker tripped)');
+  _stopped = true;
+  ENABLED = false;
+  status.enabled = false;
+  status.running = false;
+  status.loggedIn = false;
+  status.lastError = message || 'NUMPANEL auto-disabled after login failure';
+  status.lastErrorAt = Math.floor(Date.now() / 1000);
+  if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; }
+  if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
+  try { await browser?.close(); } catch (_) {}
+  browser = null; page = null; loggedIn = false;
+  return true;
+}
+
 // Cookie domain — NUMPANEL runs on bare IP so we strip protocol
 function cookieDomain() {
   try { return new URL(BASE_URL).hostname; } catch (_) { return '51.89.99.105'; }
