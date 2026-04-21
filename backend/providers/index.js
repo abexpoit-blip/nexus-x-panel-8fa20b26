@@ -3,12 +3,14 @@ const acchub = require('./acchub');
 const ims = require('./ims');
 const msi = require('./msi');
 const numpanel = require('./numpanel');
+const xisora = require('./xisora');
 
 const providers = {
   acchub,
   ims,
   msi,
   numpanel,
+  xisora,
 };
 
 function get(id) {

@@ -128,4 +128,8 @@ app.listen(PORT, () => {
   // Start NumPanel bot (no-op if NUMPANEL_ENABLED=false)
   try { require('./workers/numpanelBot').start(); }
   catch (e) { console.warn('numpanel bot start error:', e.message); }
+
+  // Start XISORA bot (no-op if XISORA_ENABLED=false)
+  try { require('./workers/xisoraBot').start(); }
+  catch (e) { console.warn('xisora bot start error:', e.message); }
 });
