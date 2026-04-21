@@ -591,7 +591,12 @@ export const api = {
     }>("/admin/acchub-credentials"),
     acchubCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
       request<{ ok: boolean }>("/admin/acchub-credentials", { method: "PUT", body: JSON.stringify(body) }),
-    acchubTest: () => request<{ ok: boolean; loggedIn?: boolean; balance?: number; error?: string }>("/admin/acchub-test", { method: "POST" }),
+    acchubTest: () => request<{
+      ok: boolean;
+      loggedIn?: boolean;
+      error?: string;
+      status?: { balance?: number | null; currency?: string | null; loggedIn?: boolean };
+    }>("/admin/acchub-test", { method: "POST" }),
 
     // ---- NumPanel Bot ----
     numpanelStatus: () => request<{ status: any }>("/admin/numpanel-status"),
