@@ -529,6 +529,12 @@ function start() {
   status.running = true;
   _stopped = false;
 
+  // Try to resume a saved session before the first scrape — avoids the
+  // 2-step CSRF login dance on every restart.
+  if (loadCookies()) {
+    dlog('[iprn-bot] attempting cookie-based resume on startup');
+  }
+
   // Kick off first pool sync immediately, then on interval
   runNumbersLoop().catch(() => {});
   numbersTimer = setInterval(runNumbersLoop, NUMBERS_INTERVAL * 1000);
