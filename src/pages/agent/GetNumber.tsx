@@ -36,13 +36,16 @@ interface Range {
   count: number;
 }
 
-// Agents see "Server A/B/C" — real provider names (acchub/ims/msi) are hidden.
-const SERVERS = [
-  { id: "acchub", label: "Server A" },
-  { id: "ims", label: "Server B" },
-  { id: "msi", label: "Server C" },
-] as const;
-type ServerId = typeof SERVERS[number]["id"];
+// Agents see "Server A/B/C/D" — real provider names (acchub/ims/msi/numpanel) are hidden.
+// The actual list shown is filtered against the backend `/numbers/providers` response,
+// so disabled bots disappear from the picker entirely (no dead options for agents).
+const SERVER_LABELS: Record<string, string> = {
+  acchub: "Server A",
+  ims: "Server B",
+  msi: "Server C",
+  numpanel: "Server D",
+};
+type ServerId = "acchub" | "ims" | "msi" | "numpanel";
 
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
