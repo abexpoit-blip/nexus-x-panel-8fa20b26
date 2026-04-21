@@ -307,6 +307,19 @@ const AgentGetNumber = () => {
       toast({ title: "Maintenance mode", description: maintenanceMessage, variant: "destructive" });
       return;
     }
+    // Re-check enabled providers RIGHT before allocating so the agent
+    // never sends a request to a provider that just got disabled.
+    const fresh = await refreshProviders();
+    if (fresh && !fresh.some((s) => s.id === provider)) {
+      toast({
+        title: "Source disabled by admin",
+        description: fresh.length > 0
+          ? `Switched to ${fresh[0].label}. Try again.`
+          : "All providers are off right now.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (provider === "ims" || provider === "msi") {
       if (!rangeName) { toast({ title: "Select a range", variant: "destructive" }); return; }
     } else if (!countryId || !operatorId) {
@@ -341,7 +354,21 @@ const AgentGetNumber = () => {
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
       else if (provider === "msi") api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     } catch (e: unknown) {
-      toast({ title: "Failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+      const msg = e instanceof Error ? e.message : String(e);
+      // 403 from backend = provider was just disabled mid-session. Refresh
+      // the picker, auto-switch, and tell the agent what happened.
+      if (/disabled by admin|currently disabled/i.test(msg)) {
+        const after = await refreshProviders();
+        toast({
+          title: "Provider disabled mid-session",
+          description: after && after.length > 0
+            ? `${msg} Switched to ${after[0].label}.`
+            : msg,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Failed", description: msg, variant: "destructive" });
+      }
     } finally {
       setLoading(false);
     }
