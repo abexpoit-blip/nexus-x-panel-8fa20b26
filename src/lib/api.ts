@@ -642,6 +642,33 @@ export const api = {
       request<{ ok: boolean }>("/admin/numpanel-cookies", { method: "DELETE" }),
   },
 
+  // ===== IPRN Bot admin (HTTP-only, no cookies/captcha) =====
+  iprn: {
+    status: () => request<{ status: any }>("/admin/iprn-status"),
+    restart: () => request<{ ok: boolean }>("/admin/iprn-restart", { method: "POST" }),
+    start: () => request<{ ok: boolean }>("/admin/iprn-start", { method: "POST" }),
+    stop: () => request<{ ok: boolean }>("/admin/iprn-stop", { method: "POST" }),
+    scrapeNow: () => request<{ ok: boolean; added?: number; otps?: number; error?: string }>("/admin/iprn-scrape-now", { method: "POST" }),
+    poolBreakdown: () => request<{
+      ranges: Array<{
+        name: string; count: number; last_added: number | null; first_added: number | null;
+        custom_name: string | null; tag_color: string | null; priority: number | null;
+        request_override: number | null; notes: string | null; disabled: number | null; service_tag: string | null;
+      }>;
+      totalActive: number; totalUsed: number;
+    }>("/admin/iprn-pool-breakdown"),
+    credentials: () => request<{
+      enabled: boolean; base_url: string; username: string;
+      password_masked: string; has_password: boolean;
+      source: { username: string; password: string };
+    }>("/admin/iprn-credentials"),
+    credentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/iprn-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    otpInterval: () => request<{ interval_sec: number; source: string; options: number[]; min: number; max: number }>("/admin/iprn-otp-interval"),
+    otpIntervalSave: (interval_sec: number) =>
+      request<{ ok: boolean; interval_sec: number }>("/admin/iprn-otp-interval", { method: "PUT", body: JSON.stringify({ interval_sec }) }),
+  },
+
   // ===== Telegram Bot admin =====
   tgbot: {
     status: () => request<{
