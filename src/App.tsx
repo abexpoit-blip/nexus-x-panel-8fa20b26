@@ -40,7 +40,6 @@ const AdminSecurity = Pages["/admin/security"].L;
 const AdminImsStatus = Pages["/admin/ims-status"].L;
 const AdminMsiStatus = Pages["/admin/msi-status"].L;
 const AdminNumPanelStatus = Pages["/admin/numpanel-status"].L;
-const AdminXisoraStatus = Pages["/admin/xisora-status"].L;
 const AdminProviderSettings = Pages["/admin/provider-settings"].L;
 const AdminWithdrawals = Pages["/admin/withdrawals"].L;
 const AdminTgBot = Pages["/admin/tg-bot"].L;
@@ -126,7 +125,6 @@ const AppRoutes = () => {
             <Route path="/admin/ims-status" element={<AdminImsStatus />} />
             <Route path="/admin/msi-status" element={<AdminMsiStatus />} />
             <Route path="/admin/numpanel-status" element={<AdminNumPanelStatus />} />
-            <Route path="/admin/xisora-status" element={<AdminXisoraStatus />} />
             <Route path="/admin/provider-settings" element={<AdminProviderSettings />} />
             <Route path="/admin/tg-bot" element={<AdminTgBot />} />
             <Route path="/admin/notifications" element={<AdminNotifications />} />

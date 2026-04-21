@@ -19,8 +19,19 @@ router.get('/config', authRequired, (req, res) => {
 });
 
 // GET /api/numbers/providers
+// Hide providers whose bot is disabled in settings/env so agents don't see
+// dead options (and we don't waste bandwidth listing empty pools).
 router.get('/providers', authRequired, (req, res) => {
-  res.json({ providers: providers.list() });
+  const all = providers.list();
+  const isEnabled = (id) => {
+    if (id === 'acchub') return true; // acchub is API-only, no toggle
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
+    const dbVal = row?.value;
+    const envVal = process.env[`${id.toUpperCase()}_ENABLED`];
+    const raw = dbVal ?? envVal ?? 'false';
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+  };
+  res.json({ providers: all.filter((p) => isEnabled(p.id)) });
 });
 
 // GET /api/numbers/countries/:provider
