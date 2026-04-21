@@ -353,12 +353,18 @@ function parsePoolRows(html) {
       cells.push(cm[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim());
     }
     if (!cells.length) continue;
-    // Find first cell that looks like a phone (digits, optional +, 7-15 chars)
-    const phoneCell = cells.find(c => /^\+?\d[\d\s\-]{6,}$/.test(c));
-    if (!phoneCell) continue;
-    const phone = phoneCell.replace(/[\s\-]/g, '');
-    const range = cells[0] || 'Unknown';        // first column usually = group/range
-    const country = cells.find(c => /^[A-Z]{2}$/.test(c)) || null;
+    // Real iprndata /numbers/index columns:
+    //   [0]=checkbox  [1]=Number  [2]=Country  [3]=Billing Group
+    //   [4]=Routing   [5]=Service [6]=Allocated To  [7]=Allocated Terms  [8]=Date  [9]=Actions
+    // The checkbox cell is sometimes absent → don't assume index 0.
+    // We instead locate the phone cell by content, then derive sibling cells.
+    const phoneIdx = cells.findIndex(c => /^\+?\d[\d\s\-]{6,}$/.test(c));
+    if (phoneIdx < 0) continue;
+    const phone = cells[phoneIdx].replace(/[\s\-]/g, '');
+    const country = cells[phoneIdx + 1] || null;          // "Tajikistan", "USA", etc.
+    // Billing group cell often contains both group name + the "+99292864v1" mask
+    // → keep the full text as range so admins recognise it.
+    const range = cells[phoneIdx + 2] || country || 'Unknown';
     rows.push({ phone, range, country });
   }
   return rows;
