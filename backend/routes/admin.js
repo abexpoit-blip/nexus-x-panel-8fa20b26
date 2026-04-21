@@ -1027,8 +1027,8 @@ router.post('/numpanel-restart', async (req, res) => {
 router.post('/numpanel-start', async (req, res) => {
   try {
     db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_enabled', 'true', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = strftime('%s','now')
+      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_enabled', '1', strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = strftime('%s','now')
     `).run();
     const bot = require('../workers/numpanelBot');
     bot.start();
@@ -1044,6 +1044,10 @@ router.post('/numpanel-start', async (req, res) => {
 
 router.post('/numpanel-stop', async (req, res) => {
   try {
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_enabled', '0', strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = '0', updated_at = strftime('%s','now')
+    `).run();
     const bot = require('../workers/numpanelBot');
     await bot.stop();
     bot.logEvent && bot.logEvent('warn', 'Bot stopped by admin');
@@ -1152,7 +1156,8 @@ router.get('/numpanel-credentials', (req, res) => {
   const username = get('numpanel_username') || process.env.NUMPANEL_USERNAME || '';
   const password = get('numpanel_password') || process.env.NUMPANEL_PASSWORD || '';
   const base_url = get('numpanel_base_url') || process.env.NUMPANEL_BASE_URL || 'http://51.89.99.105';
-  const enabled = (get('numpanel_enabled') || process.env.NUMPANEL_ENABLED || 'false').toString().toLowerCase() === 'true';
+  const enabledRaw = (get('numpanel_enabled') || process.env.NUMPANEL_ENABLED || 'false').toString().toLowerCase();
+  const enabled = ['1', 'true', 'yes', 'on'].includes(enabledRaw);
   const mask = (s) => s ? (s.length <= 4 ? '****' : s.slice(0,2) + '****' + s.slice(-2)) : '';
   res.json({
     enabled, base_url, username,
@@ -1184,7 +1189,7 @@ router.put('/numpanel-credentials', async (req, res) => {
       }
       if (clean) upsert.run('numpanel_base_url', clean);
     }
-    if (typeof enabled === 'boolean') upsert.run('numpanel_enabled', enabled ? 'true' : 'false');
+    if (typeof enabled === 'boolean') upsert.run('numpanel_enabled', enabled ? '1' : '0');
     logFromReq(req, 'numpanel_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
     try {
       const bot = require('../workers/numpanelBot');

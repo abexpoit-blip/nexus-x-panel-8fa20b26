@@ -42,6 +42,15 @@ function readSetting(key) {
   try { return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value || null; }
   catch (_) { return null; }
 }
+function writeSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, String(value));
+}
+function truthySetting(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
 // Strip any path/query/hash so BASE_URL stays as scheme+host only.
 // Admins sometimes paste the full login URL (http://host/NumberPanel/agent/login) which
 // would cause us to build http://host/NumberPanel/agent/login/NumberPanel/agent/login → 403/ERR_ABORTED.
@@ -65,7 +74,7 @@ function resolveCreds() {
   const dbToken = readSetting('numpanel_api_token');
   const dbApiBase = readSetting('numpanel_api_base');
   return {
-    ENABLED: (dbEnabled !== null ? dbEnabled : (process.env.NUMPANEL_ENABLED || 'false')).toString().toLowerCase() === 'true',
+    ENABLED: dbEnabled !== null ? truthySetting(dbEnabled) : truthySetting(process.env.NUMPANEL_ENABLED || 'false'),
     BASE_URL: normalizeBase(dbBase || process.env.NUMPANEL_BASE_URL),
     USERNAME: dbUser || process.env.NUMPANEL_USERNAME || '',
     PASSWORD: dbPass || process.env.NUMPANEL_PASSWORD || '',
@@ -102,6 +111,7 @@ const NUMBERS_INTERVAL = Math.max(60, +(process.env.NUMPANEL_NUMBERS_INTERVAL ||
 const EMPTY_LIMIT = Math.max(0, +(process.env.NUMPANEL_EMPTY_LIMIT || 0)); // 0 = disabled by default for NUMPANEL
 // How many numbers to claim per range each pool-sync cycle (clicks REQUEST button N times per range)
 const REQUEST_PER_RANGE = Math.max(0, +(process.env.NUMPANEL_REQUEST_PER_RANGE || 3));
+const LOGIN_FAIL_DISABLE_AFTER = Math.max(1, +(process.env.NUMPANEL_LOGIN_FAIL_DISABLE_AFTER || 1));
 
 let browser = null;
 let page = null;
@@ -113,6 +123,31 @@ let _stopped = false;
 let emptyStreak = 0;
 let _cookieFailStreak = 0;
 let _lastCookieExpiryAlertAt = 0;
+
+async function disableAfterLoginFailure(message) {
+  const current = +(readSetting('numpanel_login_fail_count') || 0);
+  const next = current + 1;
+  writeSetting('numpanel_login_fail_count', next);
+  console.warn(`[numpanel-bot] consecutive login failures: ${next}/${LOGIN_FAIL_DISABLE_AFTER}`);
+  if (next < LOGIN_FAIL_DISABLE_AFTER) return false;
+
+  writeSetting('numpanel_enabled', '0');
+  try { db.prepare(`DELETE FROM settings WHERE key = 'numpanel_login_fail_count'`).run(); } catch (_) {}
+  console.error(`[numpanel-bot] ✗ AUTO-DISABLED after login failure — ${message || 're-enable from admin panel after fixing login/cookies'}`);
+  logEvent('error', 'Auto-disabled after login failure (circuit breaker tripped)');
+  _stopped = true;
+  ENABLED = false;
+  status.enabled = false;
+  status.running = false;
+  status.loggedIn = false;
+  status.lastError = message || 'NUMPANEL auto-disabled after login failure';
+  status.lastErrorAt = Math.floor(Date.now() / 1000);
+  if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; }
+  if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
+  try { await browser?.close(); } catch (_) {}
+  browser = null; page = null; loggedIn = false;
+  return true;
+}
 
 // Cookie domain — NUMPANEL runs on bare IP so we strip protocol
 function cookieDomain() {
@@ -939,6 +974,7 @@ function start() {
 
   // Initial: login + first pool sync
   setTimeout(async () => {
+    if (_stopped || !ENABLED) return;
     try {
       await ensureBrowser();
       if (!loggedIn) await login();
@@ -950,38 +986,8 @@ function start() {
       } catch (_) {}
     } catch (e) {
       console.error('[numpanel-bot] initial login failed:', e.message);
-      status.lastError = e.message;
-      status.lastErrorAt = Math.floor(Date.now() / 1000);
       logEvent('error', 'Initial login failed: ' + e.message);
-      // ---- Circuit breaker: auto-disable after 3 consecutive initial-login failures ----
-      // Stops the Puppeteer-leak loop that crashes the backend with OOM.
-      try {
-        const cur = +(db.prepare(`SELECT value FROM settings WHERE key = 'numpanel_login_fail_count'`).get()?.value || 0);
-        const next = cur + 1;
-        db.prepare(`
-          INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_login_fail_count', ?, strftime('%s','now'))
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        `).run(String(next));
-        console.warn(`[numpanel-bot] consecutive login failures: ${next}/3`);
-        if (next >= 3) {
-          db.prepare(`
-            INSERT INTO settings (key, value, updated_at) VALUES ('numpanel_enabled', '0', strftime('%s','now'))
-            ON CONFLICT(key) DO UPDATE SET value = '0', updated_at = strftime('%s','now')
-          `).run();
-          db.prepare(`DELETE FROM settings WHERE key = 'numpanel_login_fail_count'`).run();
-          console.error('[numpanel-bot] ✗ AUTO-DISABLED after 3 consecutive login failures — re-enable from admin panel after fixing selectors');
-          logEvent('error', 'Auto-disabled after 3 consecutive login failures (circuit breaker tripped)');
-          // Tear down browser to free memory
-          _stopped = true;
-          status.running = false;
-          status.enabled = false;
-          ENABLED = false;
-          try { await browser?.close(); } catch (_) {}
-          browser = null; page = null;
-        }
-      } catch (be) {
-        console.warn('[numpanel-bot] circuit breaker error:', be.message);
-      }
+      await disableAfterLoginFailure(e.message).catch(be => console.warn('[numpanel-bot] circuit breaker error:', be.message));
     }
   }, 2000);
 
@@ -996,10 +1002,9 @@ function start() {
         if (!loggedIn) {
           try { await login(); _cdrReady = false; }
           catch (e) {
-            status.lastError = 'Re-login: ' + e.message;
-            status.lastErrorAt = Math.floor(Date.now() / 1000);
             status.consecFail++;
-            busy = false; scheduleOtp(); return;
+            await disableAfterLoginFailure('Re-login: ' + e.message).catch(be => console.warn('[numpanel-bot] circuit breaker error:', be.message));
+            busy = false; return;
           }
         }
         const t0 = Date.now();
