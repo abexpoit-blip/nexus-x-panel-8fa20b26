@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GradientMesh, PageHeader } from "@/components/premium";
-import { RangePoolGrid } from "@/components/admin/RangePoolGrid";
 import {
   Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText,
   RefreshCw, Power, Play, Square, Save, Eye, EyeOff, Zap, Layers,
@@ -255,7 +254,7 @@ export default function IprnStatus() {
       <PageHeader
         eyebrow="Bot · IPRN Data"
         title="IPRN Bot Status"
-        subtitle="HTTP-only scraper for iprndata.com — ~10MB RAM, no captcha, no browser."
+        description="HTTP-only scraper for iprndata.com — ~10MB RAM, no captcha, no browser."
         icon={<Bot className="w-5 h-5" />}
         actions={
           <div className="flex flex-wrap gap-2">
@@ -338,13 +337,33 @@ export default function IprnStatus() {
       </div>
 
       {/* Range pool grid */}
-      <RangePoolGrid
-        provider="iprn"
-        ranges={pool?.ranges || []}
-        totalActive={pool?.totalActive || 0}
-        totalUsed={pool?.totalUsed || 0}
-        onChanged={() => { refetch(); refetchPool(); }}
-      />
+      {pool && pool.ranges.length > 0 && (
+        <div className="glass-card border border-white/[0.06] rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+              <Database className="w-3 h-3 text-neon-magenta" /> Pool by Range
+            </div>
+            <div className="flex gap-3 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <span>Active: <span className="font-mono text-neon-cyan">{pool.totalActive}</span></span>
+              <span>Used: <span className="font-mono text-neon-green">{pool.totalUsed}</span></span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {pool.ranges.map(r => (
+              <div key={r.name} className={cn(
+                "rounded-lg border px-3 py-2 flex items-center justify-between gap-2",
+                r.disabled ? "border-destructive/30 bg-destructive/5 opacity-60" : "border-white/[0.06] bg-white/[0.02]"
+              )}>
+                <div className="min-w-0">
+                  <div className="text-xs font-mono truncate text-foreground">{r.custom_name || r.name}</div>
+                  <div className="text-[10px] text-muted-foreground">{r.last_added ? fmtAgo(r.last_added) : "—"}</div>
+                </div>
+                <span className="text-sm font-bold font-mono text-neon-magenta shrink-0">{r.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent events */}
       {s.events && s.events.length > 0 && (
