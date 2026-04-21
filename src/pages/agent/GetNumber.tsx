@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Hash, Copy, Check, Download, Search, ChevronDown, Wallet, AlertTriangle, Layers, Server, ChevronLeft, ChevronRight, Bell, BellOff } from "lucide-react";
@@ -172,21 +172,39 @@ const AgentGetNumber = () => {
   }, []);
 
   // Pull the list of enabled providers from the backend so disabled bots are
-  // hidden from the Source picker entirely. Re-runs on mount.
-  useEffect(() => {
-    api.providers()
-      .then(({ providers }) => {
-        const list = (providers || [])
-          .map((p) => ({ id: p.id as ServerId, label: SERVER_LABELS[p.id] || p.name || p.id }))
-          .filter((s) => SERVER_LABELS[s.id]);
-        setAvailableServers(list);
-        // If the currently selected provider is no longer enabled, fall back to first available.
-        if (list.length > 0 && !list.some((s) => s.id === provider)) setProvider(list[0].id);
-      })
-      .catch(() => {/* keep default Server A */})
-      .finally(() => setProvidersLoaded(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // hidden from the Source picker entirely. Refreshed on mount, on tab
+  // focus, every 30s, and right before each allocation — so a mid-session
+  // admin toggle is reflected without the agent needing to reload.
+  const refreshProviders = useCallback(async () => {
+    try {
+      const { providers } = await api.providers();
+      const list = (providers || [])
+        .map((p) => ({ id: p.id as ServerId, label: SERVER_LABELS[p.id] || p.name || p.id }))
+        .filter((s) => SERVER_LABELS[s.id]);
+      setAvailableServers(list);
+      // Auto-switch if the current selection just got disabled.
+      setProvider((cur) => (list.length > 0 && !list.some((s) => s.id === cur) ? list[0].id : cur));
+      return list;
+    } catch {
+      return null;
+    } finally {
+      setProvidersLoaded(true);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshProviders();
+    const onFocus = () => refreshProviders();
+    const onVis = () => { if (document.visibilityState === "visible") refreshProviders(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    const i = setInterval(refreshProviders, 30000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(i);
+    };
+  }, [refreshProviders]);
 
   // Format a duration in seconds: "12s" / "1m 04s" / "1h 02m"
   const fmtDuration = (sec: number) => {
