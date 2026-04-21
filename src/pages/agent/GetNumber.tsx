@@ -50,6 +50,11 @@ type ServerId = "acchub" | "ims" | "msi" | "numpanel";
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
   const [provider, setProvider] = useState<ServerId>("acchub");
+  // Servers that the BACKEND currently has enabled (filtered by /numbers/providers).
+  // Disabled bots simply disappear from the picker so agents never see dead options.
+  const [availableServers, setAvailableServers] = useState<{ id: ServerId; label: string }[]>([
+    { id: "acchub", label: SERVER_LABELS.acchub },
+  ]);
   const [countries, setCountries] = useState<Country[]>([]);
   const [countryId, setCountryId] = useState<number | "">("");
   const [operators, setOperators] = useState<Operator[]>([]);
@@ -159,6 +164,23 @@ const AgentGetNumber = () => {
         if (server_now > 0) setServerDriftSec(Math.floor(Date.now() / 1000) - server_now);
       })
       .catch(() => {/* keep fallback */});
+  }, []);
+
+  // Pull the list of enabled providers from the backend so disabled bots are
+  // hidden from the Source picker entirely. Re-runs on mount.
+  useEffect(() => {
+    api.providers()
+      .then(({ providers }) => {
+        const list = (providers || [])
+          .map((p) => ({ id: p.id as ServerId, label: SERVER_LABELS[p.id] || p.name || p.id }))
+          .filter((s) => SERVER_LABELS[s.id]);
+        if (list.length === 0) return;
+        setAvailableServers(list);
+        // If the currently selected provider is no longer enabled, fall back to first available.
+        if (!list.some((s) => s.id === provider)) setProvider(list[0].id);
+      })
+      .catch(() => {/* keep default Server A */});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Format a duration in seconds: "12s" / "1m 04s" / "1h 02m"
@@ -442,7 +464,7 @@ const AgentGetNumber = () => {
           <Server className="w-4 h-4 text-neon-cyan" />
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-2">Source</span>
           <div className="flex gap-2">
-            {SERVERS.map((s) => (
+            {availableServers.map((s) => (
               <button
                 key={s.id}
                 type="button"
