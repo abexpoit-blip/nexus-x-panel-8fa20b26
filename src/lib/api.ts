@@ -548,6 +548,17 @@ export const api = {
       request<{ ok: boolean; removed: number }>("/admin/xisora-pool-cleanup", {
         method: "POST", body: JSON.stringify(body),
       }),
+    xisoraRangeToggle: (range: string, disabled: boolean) =>
+      request<{ ok: boolean; range: string; disabled: boolean }>("/admin/xisora-range-toggle", {
+        method: "POST", body: JSON.stringify({ range, disabled }),
+      }),
+    xisoraRuns: (limit = 100) =>
+      request<{ runs: {
+        id: number; kind: string; started_at: number; finished_at: number | null;
+        duration_ms: number | null; ok: number; otps: number;
+        added: number; removed: number; kept: number; scraped: number;
+        error: string | null; triggered_by: string;
+      }[] }>(`/admin/xisora-runs?limit=${limit}`),
     otpExpiry: () => request<{
       expiry_sec: number; expiry_min: number; source: string;
       min: number; max: number; options_min: number[];

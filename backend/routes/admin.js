@@ -1464,5 +1464,31 @@ router.post('/xisora-pool-cleanup', (req, res) => {
   res.json({ ok: true, removed: r.changes });
 });
 
+// POST /api/admin/xisora-range-toggle — flip disabled flag for a range
+router.post('/xisora-range-toggle', (req, res) => {
+  const { range, disabled } = req.body || {};
+  if (!range || typeof range !== 'string') return res.status(400).json({ error: 'range required' });
+  const flag = disabled ? 1 : 0;
+  db.prepare(`
+    INSERT INTO xisora_range_meta (range_prefix, disabled, updated_at)
+    VALUES (?, ?, strftime('%s','now'))
+    ON CONFLICT(range_prefix) DO UPDATE SET disabled = excluded.disabled, updated_at = strftime('%s','now')
+  `).run(range, flag);
+  logFromReq(req, 'xisora_range_toggle', { meta: { range, disabled: !!flag } });
+  res.json({ ok: true, range, disabled: !!flag });
+});
+
+// GET /api/admin/xisora-runs — recent run history (scrape-now / sync-live / auto)
+router.get('/xisora-runs', (req, res) => {
+  const limit = Math.min(Math.max(+req.query.limit || 100, 1), 500);
+  const rows = db.prepare(`
+    SELECT id, kind, started_at, finished_at, duration_ms, ok, otps,
+           added, removed, kept, scraped, error, triggered_by
+    FROM xisora_runs
+    ORDER BY id DESC LIMIT ?
+  `).all(limit);
+  res.json({ runs: rows });
+});
+
 module.exports = router;
 
