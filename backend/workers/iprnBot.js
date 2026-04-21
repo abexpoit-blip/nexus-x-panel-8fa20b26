@@ -229,6 +229,23 @@ function rememberOtp(phone) {
 }
 function getRecentOtpFor(phone) { return recentOtpCache.has(phone); }
 
+// ---- Pool ownership ----
+// allocations.user_id is NOT NULL with FK → users(id). Pool rows aren't
+// owned by a real agent yet, so we attach them to a synthetic suspended
+// system user (same pattern as msiBot/imsBot). Without this, every insert
+// fails with "FOREIGN KEY constraint failed" and 0 numbers ever land.
+function ensurePoolUser() {
+  let u = db.prepare("SELECT id FROM users WHERE username = '__iprn_pool__'").get();
+  if (!u) {
+    const r = db.prepare(
+      `INSERT INTO users (username, password_hash, role, status)
+       VALUES ('__iprn_pool__', '!', 'agent', 'suspended')`
+    ).run();
+    u = { id: r.lastInsertRowid };
+  }
+  return u;
+}
+
 // ---- Login ----
 async function login() {
   cookies.clear();
