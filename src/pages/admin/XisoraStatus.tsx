@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { GradientMesh, PageHeader } from "@/components/premium";
@@ -6,6 +6,7 @@ import {
   Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText,
   RefreshCw, Power, Play, Square, Zap, Sparkles, Layers, Clock, Trash2,
   Heart, AlertOctagon, History as HistoryIcon, Pause, PlayCircle,
+  ShieldAlert, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Save,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -62,6 +63,13 @@ const AdminXisoraStatus = () => {
   const [busy, setBusy] = useState(false);
   const [scraping, setScraping] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Run-history pagination
+  const [runsPage, setRunsPage] = useState(1);
+  const RUNS_PAGE_SIZE = 25;
+  // Auto-restart settings (local form state, hydrated from query)
+  const [arEnabled, setArEnabled] = useState(false);
+  const [arIntervals, setArIntervals] = useState(3);
+  const [arSaving, setArSaving] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["xisora-status"],
@@ -74,11 +82,39 @@ const AdminXisoraStatus = () => {
     refetchInterval: 10000,
   });
   const { data: runsData, refetch: refetchRuns } = useQuery({
-    queryKey: ["xisora-runs"],
-    queryFn: () => api.admin.xisoraRuns(50),
+    queryKey: ["xisora-runs", runsPage],
+    queryFn: () => api.admin.xisoraRuns(RUNS_PAGE_SIZE, (runsPage - 1) * RUNS_PAGE_SIZE),
     refetchInterval: 8000,
   });
+  const { data: arData, refetch: refetchAr } = useQuery({
+    queryKey: ["xisora-autorestart"],
+    queryFn: () => api.admin.xisoraAutoRestart(),
+    refetchInterval: 15000,
+  });
+  useEffect(() => {
+    if (arData) {
+      setArEnabled(arData.enabled);
+      setArIntervals(arData.intervals);
+    }
+  }, [arData]);
   const s = data?.status as XisoraStatus | undefined;
+
+  const runsTotal = runsData?.total ?? 0;
+  const runsTotalPages = Math.max(1, Math.ceil(runsTotal / RUNS_PAGE_SIZE));
+  useEffect(() => {
+    if (runsPage > runsTotalPages) setRunsPage(runsTotalPages);
+  }, [runsTotalPages, runsPage]);
+
+  const handleSaveAutoRestart = async () => {
+    setArSaving(true);
+    try {
+      await api.admin.xisoraAutoRestartSave({ enabled: arEnabled, intervals: arIntervals });
+      toast.success(`Auto-restart ${arEnabled ? "enabled" : "disabled"} (${arIntervals} intervals)`);
+      refetchAr();
+    } catch (e) {
+      toast.error("Save failed: " + (e as Error).message);
+    } finally { setArSaving(false); }
+  };
 
   const handleAction = async (action: "restart" | "start" | "stop") => {
     const labels = { restart: "Restart", start: "Start", stop: "Stop" };
