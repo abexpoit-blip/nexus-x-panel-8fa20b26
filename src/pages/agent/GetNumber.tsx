@@ -483,6 +483,7 @@ const AgentGetNumber = () => {
         </GlassCard>
       )}
 
+      {availableServers.length > 0 && (
       <GlassCard glow="cyan" className={cn("relative", (countryOpen || rangeOpen) ? "z-50" : "z-10")}>
         {/* Server selector — Server A = AccHub, Server B = IMS (real names hidden) */}
         <div className="flex items-center gap-2 mb-4 pb-4 border-b border-white/[0.06]">
