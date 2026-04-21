@@ -65,8 +65,7 @@ beforeEach(() => {
   apiState.getNumberImpl = vi.fn(() => Promise.resolve({ allocated: [], errors: [] }));
   // jsdom: clipboard + Notification stubs
   Object.assign(navigator, { clipboard: { writeText: vi.fn(() => Promise.resolve()) } });
-  // @ts-expect-error — define for the visibility check inside the component
-  global.Notification = undefined;
+  (global as unknown as { Notification: undefined }).Notification = undefined;
 });
 
 afterEach(() => {
