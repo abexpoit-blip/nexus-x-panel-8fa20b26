@@ -527,12 +527,15 @@ function start() {
           new Promise((_, rej) => setTimeout(() => rej(new Error('otp-poll timeout 60s')), 60000)),
         ]);
         status.consecFail = 0;
+        lastHeartbeatAt = Math.floor(Date.now() / 1000);
+        lastSuccessAt = lastHeartbeatAt;
         if (delivered > 0) console.log(`[xisora-bot] poll delivered ${delivered} OTP(s) in ${Date.now() - t0}ms`);
       } catch (e) {
         status.consecFail++;
         status.lastError = e.message;
         status.lastErrorAt = Math.floor(Date.now() / 1000);
         status.lastScrapeOk = false;
+        lastHeartbeatAt = Math.floor(Date.now() / 1000);   // heartbeat fires even on failure
         console.warn(`[xisora-bot] otp-poll fail #${status.consecFail}:`, e.message);
         logEvent('warn', `OTP poll failed (#${status.consecFail}): ${e.message}`);
         if (status.consecFail >= 3) {
