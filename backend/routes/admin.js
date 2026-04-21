@@ -638,17 +638,80 @@ router.put('/ims-otp-interval', async (req, res) => {
 router.get('/provider-status', async (req, res) => {
   try {
     const providers = require('../providers');
+    // Helper: read enabled flag from settings/env (mirrors /api/numbers/providers logic)
+    const readEnabled = (id) => {
+      if (id === 'acchub') return true; // acchub has no toggle (API only)
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
+      const dbVal = row?.value;
+      const envVal = process.env[`${id.toUpperCase()}_ENABLED`];
+      const raw = dbVal ?? envVal ?? 'false';
+      return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+    };
     const out = [];
     for (const meta of providers.list()) {
       const p = providers.get(meta.id);
+      const enabled = readEnabled(meta.id);
+      const togglable = meta.id !== 'acchub';
       if (typeof p.getStatus === 'function') {
-        try { out.push(await p.getStatus()); }
-        catch (e) { out.push({ id: meta.id, name: meta.name, configured: false, lastError: e.message }); }
+        try {
+          const s = await p.getStatus();
+          out.push({ ...s, enabled, togglable });
+        }
+        catch (e) { out.push({ id: meta.id, name: meta.name, configured: false, lastError: e.message, enabled, togglable }); }
       } else {
-        out.push({ id: meta.id, name: meta.name, configured: true, lastError: null });
+        out.push({ id: meta.id, name: meta.name, configured: true, lastError: null, enabled, togglable });
       }
     }
     res.json({ providers: out });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/admin/provider-toggle — Soft ON/OFF toggle for any provider.
+// Body: { id: 'msi'|'iprn'|'numpanel'|'ims', enabled: boolean }
+// - flips <id>_enabled in settings (overrides .env)
+// - calls bot.start() / bot.stop() so the change takes effect immediately
+// - data (allocations, rates, range_meta) is preserved → "soft" disable
+router.put('/provider-toggle', async (req, res) => {
+  try {
+    const { id, enabled } = req.body || {};
+    const validIds = ['msi', 'iprn', 'numpanel', 'ims'];
+    if (!validIds.includes(id)) {
+      return res.status(400).json({ error: `id must be one of: ${validIds.join(', ')}` });
+    }
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled (boolean) required' });
+    }
+
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
+    `).run(`${id}_enabled`, enabled ? 'true' : 'false');
+
+    const botFile = id === 'iprn' ? 'iprnBot' : id === 'msi' ? 'msiBot' : id === 'numpanel' ? 'numpanelBot' : 'imsBot';
+    let botMsg = '';
+    try {
+      const bot = require(`../workers/${botFile}`);
+      if (enabled) {
+        bot.start();
+        botMsg = 'bot started';
+      } else {
+        if (typeof bot.stop === 'function') {
+          await bot.stop();
+          botMsg = 'bot stopped';
+        } else {
+          botMsg = 'bot has no stop() — will exit on next cycle';
+        }
+      }
+      bot.logEvent && bot.logEvent(enabled ? 'success' : 'warn', `Toggled ${enabled ? 'ON' : 'OFF'} by admin`);
+    } catch (e) {
+      console.warn(`provider-toggle ${id}: bot ${enabled ? 'start' : 'stop'} failed:`, e.message);
+      botMsg = `bot reload failed: ${e.message}`;
+    }
+
+    logFromReq(req, 'provider_toggle', { meta: { id, enabled, bot: botMsg } });
+    res.json({ ok: true, id, enabled, message: botMsg });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
