@@ -545,6 +545,54 @@ export const api = {
     msiCookiesClear: () =>
       request<{ ok: boolean }>("/admin/msi-cookies", { method: "DELETE" }),
 
+    // ---- MSI Bot status / control ----
+    msiStatus: () => request<{ status: any }>("/admin/msi-status"),
+    msiRestart: () => request<{ ok: boolean }>("/admin/msi-restart", { method: "POST" }),
+    msiStart: () => request<{ ok: boolean }>("/admin/msi-start", { method: "POST" }),
+    msiStop: () => request<{ ok: boolean }>("/admin/msi-stop", { method: "POST" }),
+    msiScrapeNow: () => request<{ ok: boolean; added?: number; otps?: number; error?: string }>("/admin/msi-scrape-now", { method: "POST" }),
+    msiSyncLive: () => request<{ ok: boolean; added?: number; removed?: number; kept?: number; scraped?: number; ranges?: string[]; error?: string }>("/admin/msi-sync-live", { method: "POST" }),
+    msiPoolBreakdown: () => request<{
+      ranges: {
+        name: string; count: number; last_added: number; first_added?: number;
+        custom_name: string | null; tag_color: string | null; priority: number | null;
+        request_override: number | null; notes: string | null;
+        disabled: number | null; service_tag: string | null;
+      }[];
+      totalActive: number; totalUsed?: number;
+    }>("/admin/msi-pool-breakdown"),
+    msiRangeMetaSave: (body: {
+      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
+      priority?: number | null; request_override?: number | null; notes?: string | null;
+      disabled?: boolean; service_tag?: string | null;
+    }) => request<{ ok: boolean }>("/admin/msi-range-meta", { method: "PUT", body: JSON.stringify(body) }),
+    msiRangeMetaDelete: (prefix: string) =>
+      request<{ ok: boolean }>(`/admin/msi-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
+
+    // ---- Global provider settings ----
+    systemHealth: () => request<SystemHealth>("/admin/system-health"),
+    providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
+    otpExpiry: () => request<{ expiry_min: number; source: string; options_min: number[] }>("/admin/otp-expiry"),
+    otpExpirySave: (expiry_min: number) =>
+      request<{ ok: boolean; expiry_min: number }>("/admin/otp-expiry", {
+        method: "PUT", body: JSON.stringify({ expiry_min }),
+      }),
+    recentOtpWindow: () => request<{ hours: number; source: string; options_hours: number[] }>("/admin/recent-otp-window"),
+    recentOtpWindowSave: (hours: number) =>
+      request<{ ok: boolean; hours: number }>("/admin/recent-otp-window", {
+        method: "PUT", body: JSON.stringify({ hours }),
+      }),
+
+    // ---- AccHub credentials ----
+    acchubCredentials: () => request<{
+      enabled: boolean; base_url: string; username: string;
+      password_masked: string; has_password: boolean;
+      source: { username: string; password: string };
+    }>("/admin/acchub-credentials"),
+    acchubCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/acchub-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    acchubTest: () => request<{ ok: boolean; loggedIn?: boolean; balance?: number; error?: string }>("/admin/acchub-test", { method: "POST" }),
+
     // ---- NumPanel Bot ----
     numpanelStatus: () => request<{ status: any }>("/admin/numpanel-status"),
     numpanelRestart: () => request<{ ok: boolean }>("/admin/numpanel-restart", { method: "POST" }),
