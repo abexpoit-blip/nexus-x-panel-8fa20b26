@@ -102,7 +102,12 @@ beforeEach(() => {
   backend.iprnEnabled = false;
   backend.msiBlockedAtAllocate = false;
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
-  Object.assign(navigator, { clipboard: { writeText: vi.fn(() => Promise.resolve()) } });
+  // jsdom: `navigator.clipboard` is a getter on the prototype, so direct
+  // assignment throws on the second test. defineProperty bypasses it.
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn(() => Promise.resolve()) },
+  });
   (global as unknown as { Notification: undefined }).Notification = undefined;
   localStorage.setItem("nexus_token", "test-token");
 });
