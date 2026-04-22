@@ -38,6 +38,23 @@ function getPublicChannelId() {
   } catch { return null; }
 }
 
+// Dedicated "OTP feed" group/channel. If unset, falls back to tg_public_channel.
+// Use this when you want a SEPARATE group that receives every real OTP (bot must be admin there).
+function getOtpFeedChatId() {
+  try {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_otp_feed_chat'").get()?.value;
+    if (!v) return getPublicChannelId();
+    let n = String(v).trim();
+    if (!n) return getPublicChannelId();
+    if (n.startsWith('https://t.me/')) n = n.replace('https://t.me/', '');
+    if (n.startsWith('http://t.me/')) n = n.replace('http://t.me/', '');
+    if (/^-?\d+$/.test(n)) return n;
+    if (n.startsWith('@')) return n;
+    if (n.startsWith('+')) return null;         // private invite hash — needs numeric id
+    return '@' + n;
+  } catch { return getPublicChannelId(); }
+}
+
 function getBotConfig() {
   try {
     const rows = db.prepare(`
