@@ -511,6 +511,17 @@ export const api = {
     leaderboard: () => request<{ leaderboard: { id: number; username: string; otp_count: number; numbers_used?: number; earnings_bdt?: number }[] }>("/admin/leaderboard"),
     commissionTrend: (days = 14) => request<{ series: { label: string; value: number; count: number }[] }>(`/admin/commission-trend?days=${days}`),
     allocations: () => request<{ allocations: Allocation[] }>("/admin/allocations"),
+    poolInspector: () => request<{ countries: {
+      country_code: string;
+      country_name: string;
+      inferred: boolean;
+      total: number;
+      ranges: {
+        range: string;
+        total: number;
+        bots: { provider: string; label: string; count: number }[];
+      }[];
+    }[] }>("/admin/pool-inspector"),
     imsStatus: () => request<{ status: any }>("/admin/ims-status"),
     imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),
     imsStart: () => request<{ ok: boolean }>("/admin/ims-start", { method: "POST" }),
