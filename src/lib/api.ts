@@ -783,7 +783,13 @@ export const api = {
     stop: () => request<{ ok: boolean }>("/admin/iprn-sms-stop", { method: "POST" }),
     scrapeNow: () => request<{ ok: boolean; added?: number; error?: string }>("/admin/iprn-sms-scrape-now", { method: "POST" }),
     poolBreakdown: () => request<{
-      ranges: Array<{ range_name: string; count: number; disabled: number }>;
+      ranges: Array<{
+        name: string; range_name: string; count: number;
+        last_added: number | null; first_added: number | null;
+        custom_name: string | null; tag_color: string | null; priority: number | null;
+        request_override: number | null; notes: string | null;
+        disabled: number; service_tag: string | null;
+      }>;
       totalPool: number; totalActive: number; totalUsed: number;
     }>("/admin/iprn-sms-pool-breakdown"),
     credentials: () => request<{
