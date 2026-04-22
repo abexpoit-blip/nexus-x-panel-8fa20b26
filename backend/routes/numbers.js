@@ -36,7 +36,16 @@ router.get('/config', authRequired, (req, res) => {
 // dead options (and we don't waste bandwidth listing empty pools).
 router.get('/providers', authRequired, (req, res) => {
   const all = providers.list();
-  res.json({ providers: all.filter((p) => isProviderEnabled(p.id)) });
+  const enabled = all.filter((p) => isProviderEnabled(p.id));
+  // Append a virtual "all" provider when at least 2 manual-pool providers are enabled,
+  // so the agent can pick from a unified pool spanning every bot.
+  const POOL_PROVIDERS = ['ims', 'msi', 'iprn', 'iprn_sms', 'numpanel'];
+  const enabledPool = enabled.filter((p) => POOL_PROVIDERS.includes(p.id));
+  const out = enabled.slice();
+  if (enabledPool.length >= 2) {
+    out.push({ id: 'all', name: 'All Servers', mode: 'manual' });
+  }
+  res.json({ providers: out });
 });
 
 // GET /api/numbers/countries/:provider
@@ -72,6 +81,55 @@ router.get('/msi/ranges', authRequired, async (req, res) => {
     const provider = providers.get('msi');
     const ranges = await provider.listRanges();
     res.json({ ranges });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/numbers/all/ranges — UNION of every manual-pool provider's ranges,
+// labelled with the country prefix + provider tag so the agent can pick from
+// any bot's pool in one place. The `key` field is `<providerId>::<rangeName>`
+// and is what the agent should pass back as `range` when calling /numbers/get
+// with provider='all'. The display `name` is "Country — Range (Server X)".
+router.get('/all/ranges', authRequired, async (req, res) => {
+  const POOL_LABELS = {
+    ims: 'Server B', msi: 'Server C', numpanel: 'Server D',
+    iprn: 'Server E', iprn_sms: 'Server F',
+  };
+  try {
+    const out = [];
+    for (const pid of Object.keys(POOL_LABELS)) {
+      if (!isProviderEnabled(pid)) continue;
+      let p;
+      try { p = providers.get(pid); } catch (_) { continue; }
+      let ranges = [];
+      try { ranges = await p.listRanges(); } catch (_) { continue; }
+      for (const r of ranges || []) {
+        if (!r || !r.name || !r.count) continue;
+        // Try to get a representative country for this range from the pool table.
+        // Falls back to whatever the range name already contains.
+        let country = null;
+        try {
+          const row = db.prepare(
+            "SELECT country_code FROM allocations WHERE provider=? AND status='pool' AND COALESCE(operator,'Unknown')=? AND country_code IS NOT NULL LIMIT 1"
+          ).get(pid, r.name);
+          country = row?.country_code || null;
+        } catch (_) {}
+        const label = country
+          ? `${country} — ${r.name} (${POOL_LABELS[pid]})`
+          : `${r.name} (${POOL_LABELS[pid]})`;
+        out.push({
+          key: `${pid}::${r.name}`,
+          name: label,
+          range: r.name,
+          provider: pid,
+          provider_label: POOL_LABELS[pid],
+          country_code: country,
+          count: r.count,
+        });
+      }
+    }
+    // Sort by country then range name so related entries cluster together
+    out.sort((a, b) => (a.country_code || 'zz').localeCompare(b.country_code || 'zz') || a.name.localeCompare(b.name));
+    res.json({ ranges: out });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
