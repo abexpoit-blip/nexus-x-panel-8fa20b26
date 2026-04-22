@@ -232,7 +232,17 @@ const AgentGetNumber = () => {
         .filter((s) => SERVER_LABELS[s.id]);
       setAvailableServers(list);
       // Auto-switch if the current selection just got disabled.
-      setProvider((cur) => (list.length > 0 && !list.some((s) => s.id === cur) ? list[0].id : cur));
+      // For non-admin agents, prefer 'all' when present; never auto-switch
+      // them to AccHub-only (admin tab).
+      setProvider((cur) => {
+        if (list.some((s) => s.id === cur)) return cur;
+        if (list.length === 0) return cur;
+        if (!isAdmin) {
+          const all = list.find((s) => s.id === "all");
+          if (all) return all.id;
+        }
+        return list[0].id;
+      });
       return list;
     } catch {
       return null;
