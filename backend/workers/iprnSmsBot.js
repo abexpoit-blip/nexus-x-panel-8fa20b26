@@ -23,6 +23,7 @@
 const axios = require('axios');
 const AdmZip = require('adm-zip');
 const db = require('../lib/db');
+const { markOtpReceived } = require('../routes/numbers');
 
 const QUIET = process.env.NODE_ENV === 'production';
 const dlog = (...a) => { if (!QUIET) console.log(...a); };
@@ -59,6 +60,13 @@ function resolveCreds() {
 
 let { ENABLED, BASE_URL, USERNAME, PASSWORD, TYPE } = resolveCreds();
 const NUMBERS_INTERVAL = Math.max(60, +(process.env.IPRN_SMS_NUMBERS_INTERVAL || 600));
+// OTP scrape interval — far shorter than pool sync since this is the
+// agent-facing latency. Min 3s to avoid hammering panel.iprn-sms.com.
+const OTP_INTERVAL = Math.max(3, +(process.env.IPRN_SMS_OTP_INTERVAL || 5));
+// The stats endpoint is currency-filtered. Per the user's manual check,
+// OTPs are only visible when currency=USD is selected. Configurable in case
+// the account ever changes payout currency.
+const OTP_CURRENCY = (process.env.IPRN_SMS_OTP_CURRENCY || 'USD').toUpperCase();
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -67,6 +75,7 @@ const cookies = new Map();
 let loggedIn = false;
 let busy = false;
 let numbersTimer = null;
+let otpTimer = null;
 let _stopped = false;
 
 function cookieHeader() {
@@ -166,6 +175,10 @@ const status = {
   loggedIn: false,
   lastLoginAt: null,
   lastNumbersScrapeAt: null,
+  lastOtpScrapeAt: null,
+  lastOtpScrapeOk: false,
+  otpsDeliveredTotal: 0,
+  otpEndpoint: null,        // first endpoint that returned valid JSON; cached after discovery
   lastError: null,
   lastErrorAt: null,
   numbersScrapedTotal: 0,
@@ -174,6 +187,8 @@ const status = {
   consecFail: 0,
   baseUrl: '',
   numbersIntervalSec: 0,
+  otpIntervalSec: 0,
+  otpCurrency: 'USD',
   smsType: 'sms',
 };
 const events = [];
@@ -203,6 +218,14 @@ function getStatus() {
 // OTP cache (currently no live OTP feed for this account — kept for parity)
 const recentOtpCache = new Map();
 function getRecentOtpFor(phone) { return recentOtpCache.has(phone); }
+function rememberOtp(phone) {
+  recentOtpCache.set(String(phone), Date.now());
+  // Cap at 2000 entries — drop oldest
+  if (recentOtpCache.size > 2000) {
+    const cutoff = Date.now() - 6 * 60 * 60 * 1000; // 6h
+    for (const [k, t] of recentOtpCache) if (t < cutoff) recentOtpCache.delete(k);
+  }
+}
 
 // ---- Pool ownership (FK requires real user_id) ----
 function ensurePoolUser() {
@@ -447,6 +470,179 @@ async function scrapeNumbers() {
   return added;
 }
 
+// ============================================================
+// OTP scraper — pulls the Statistics DataTable feed
+// ============================================================
+// The user verified manually: OTPs are visible on
+//   https://panel.iprn-sms.com/premium_number/stats/sms
+// only when the Currency filter is set to USD. We hit the same
+// DataTables AJAX with currency=USD and parse the Message column.
+//
+// The exact AJAX URL is not documented; we try a small list of
+// likely Symfony route patterns and cache the first one that
+// returns JSON with rows. This avoids needing a separate probe step.
+
+function todayStr() {
+  const d = new Date();
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+}
+
+function buildOtpEndpointCandidates() {
+  const t = todayStr();
+  const dr = `${t}+00+-+${t}+23`;
+  const qs = `draw=1&start=0&length=200&currency=${OTP_CURRENCY}&date_range=${encodeURIComponent(dr)}`;
+  return [
+    `/api/helper/premium-number/stats/${TYPE}?${qs}`,
+    `/api/helper/premium-number/stats-data/${TYPE}?${qs}`,
+    `/api/helper/premium-number/sms-stats/${TYPE}?${qs}`,
+    `/api/helper/premium-number/reports/${TYPE}?${qs}`,
+    `/premium_number/stats/${TYPE}?${qs}&_xhr=1`,
+    // Same set without date_range in case server uses session default
+    `/api/helper/premium-number/stats/${TYPE}?draw=1&start=0&length=200&currency=${OTP_CURRENCY}`,
+    `/api/helper/premium-number/stats-data/${TYPE}?draw=1&start=0&length=200&currency=${OTP_CURRENCY}`,
+  ];
+}
+
+function extractOtpFromMessage(text) {
+  if (!text) return null;
+  const s = String(text);
+  const m =
+    s.match(/\b(?:code|otp|pin|password|verification|c[oó]digo)[\s:#-]*[A-Z]?(\d{3,8})\b/i) ||
+    s.match(/(?:^|[^\d])(\d{4,8})\s+is\s+your/i) ||
+    s.match(/<#>\s*(\d{4,8})\b/) ||
+    s.match(/\b(\d{4,8})\b/);
+  return m ? m[1] : null;
+}
+
+// Normalize a row from the unknown DataTables shape into {phone, message, cli}
+function normalizeStatsRow(row) {
+  if (!row) return null;
+  // Object shape
+  if (typeof row === 'object' && !Array.isArray(row)) {
+    const phone = row.number || row.phone || row.msisdn || row.dnis || null;
+    const message = row.message || row.text || row.body || row.sms || null;
+    const cli = row.cli || row.source || row.sender || null;
+    if (phone && message) return { phone: String(phone).replace(/\D/g, ''), message: String(message), cli: cli ? String(cli) : null };
+    return null;
+  }
+  // Array shape: try to identify phone + longest text
+  if (Array.isArray(row)) {
+    const cells = row.map((c) => (c == null ? '' : String(c).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()));
+    const phone = cells.find((c) => /^\+?\d[\d\s\-]{6,}$/.test(c));
+    const sorted = cells.slice().sort((a, b) => b.length - a.length);
+    const message = sorted[0];
+    if (phone && message && message.length >= 6) {
+      const cli = cells.find((c) => /^[A-Za-z][A-Za-z0-9_]{1,20}$/.test(c)) || null;
+      return { phone: phone.replace(/\D/g, ''), message, cli };
+    }
+  }
+  return null;
+}
+
+async function fetchStatsOnce(url) {
+  const res = await http.get(url, {
+    headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+    validateStatus: (s) => s < 600,
+  });
+  const ct = String(res.headers['content-type'] || '');
+  if (res.status >= 300 && res.status < 400) {
+    // Redirected to /login => session dead
+    const loc = res.headers.location || '';
+    if (/\/login/i.test(loc)) {
+      loggedIn = false;
+      throw new Error('Session expired during OTP scrape');
+    }
+  }
+  if (res.status !== 200 || !ct.includes('application/json')) {
+    return { ok: false, status: res.status, ct };
+  }
+  const body = res.data;
+  const rows = Array.isArray(body?.aaData) ? body.aaData
+              : Array.isArray(body?.data) ? body.data
+              : Array.isArray(body) ? body
+              : null;
+  if (!rows) return { ok: false, status: res.status, ct, reason: 'no rows array' };
+  return { ok: true, rows };
+}
+
+async function scrapeOtps() {
+  await ensureLoggedIn();
+
+  // Try the cached endpoint first; if missing or it stops working, probe candidates.
+  const tryList = status.otpEndpoint
+    ? [status.otpEndpoint, ...buildOtpEndpointCandidates().filter((u) => u !== status.otpEndpoint)]
+    : buildOtpEndpointCandidates();
+
+  let result = null;
+  let workingUrl = null;
+  for (const url of tryList) {
+    try {
+      const r = await fetchStatsOnce(url);
+      if (r.ok) { result = r; workingUrl = url; break; }
+    } catch (e) {
+      if (/Session expired/.test(e.message)) throw e;
+      // try next
+    }
+  }
+
+  status.lastOtpScrapeAt = Math.floor(Date.now() / 1000);
+  if (!result) {
+    status.lastOtpScrapeOk = false;
+    throw new Error(`No working OTP stats endpoint (tried ${tryList.length}). Run scripts/iprn-sms-stats-probe.js`);
+  }
+  status.lastOtpScrapeOk = true;
+  if (status.otpEndpoint !== workingUrl) {
+    status.otpEndpoint = workingUrl;
+    console.log(`[iprn_sms-bot] OTP endpoint resolved: ${workingUrl}`);
+    logEvent('success', `OTP endpoint resolved: ${workingUrl}`);
+  }
+
+  let delivered = 0;
+  for (const raw of result.rows) {
+    const row = normalizeStatsRow(raw);
+    if (!row) continue;
+    const otp = extractOtpFromMessage(row.message);
+    if (!otp) continue;
+
+    rememberOtp(row.phone);
+
+    const a = db.prepare(`
+      SELECT * FROM allocations
+      WHERE provider='iprn_sms' AND phone_number=? AND status='active' AND otp IS NULL
+      ORDER BY allocated_at DESC LIMIT 1
+    `).get(row.phone);
+    if (!a) continue;
+
+    try {
+      await markOtpReceived(a, otp, row.cli);
+      delivered++;
+      status.otpsDeliveredTotal++;
+      console.log(`[iprn_sms-bot] ✓ OTP delivered: ${row.phone} → ${otp} (user_id=${a.user_id})`);
+      logEvent('success', `OTP delivered: ${row.phone} → ${otp}`);
+    } catch (e) {
+      dwarn('[iprn_sms-bot] markOtpReceived failed:', e.message);
+    }
+  }
+  return delivered;
+}
+
+async function runOtpLoop() {
+  if (_stopped) return;
+  try {
+    await scrapeOtps();
+    status.consecFail = 0;
+  } catch (e) {
+    status.consecFail++;
+    status.lastError = e.message;
+    status.lastErrorAt = Math.floor(Date.now() / 1000);
+    if (status.consecFail % 6 === 1) {
+      dwarn(`[iprn_sms-bot] OTP scrape failed (${status.consecFail}): ${e.message}`);
+      logEvent('error', `OTP scrape failed ${status.consecFail}x: ${e.message}`);
+    }
+    if (/Session expired/.test(e.message)) loggedIn = false;
+  }
+}
+
 // ---- Loop runner ----
 async function runNumbersLoop() {
   if (busy || _stopped) return;
@@ -474,6 +670,8 @@ function start() {
   status.baseUrl = BASE_URL;
   status.smsType = TYPE;
   status.numbersIntervalSec = NUMBERS_INTERVAL;
+  status.otpIntervalSec = OTP_INTERVAL;
+  status.otpCurrency = OTP_CURRENCY;
 
   if (!ENABLED) {
     console.log('[iprn_sms-bot] disabled (set IPRN_SMS_ENABLED=true to enable)');
@@ -495,12 +693,18 @@ function start() {
 
   runNumbersLoop().catch(() => {});
   numbersTimer = setInterval(runNumbersLoop, NUMBERS_INTERVAL * 1000);
+
+  // Kick off OTP scrape loop (currency-filtered stats endpoint)
+  console.log(`[iprn_sms-bot] OTP poller starting → currency=${OTP_CURRENCY} interval=${OTP_INTERVAL}s`);
+  runOtpLoop().catch(() => {});
+  otpTimer = setInterval(runOtpLoop, OTP_INTERVAL * 1000);
 }
 
 function stop() {
   _stopped = true;
   status.running = false;
   if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
+  if (otpTimer) { clearInterval(otpTimer); otpTimer = null; }
 }
 
 async function restart() {
