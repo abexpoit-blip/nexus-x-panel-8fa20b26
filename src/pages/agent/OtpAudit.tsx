@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   RefreshCw, ScrollText, Search, CheckCircle2, XCircle, Radio,
-  AlertTriangle, Wallet, ChevronDown,
+  AlertTriangle, Wallet, ChevronDown, Link2, Wifi, Clock,
 } from "lucide-react";
 
 type AuditRow = {
@@ -56,12 +56,15 @@ const AgentOtpAudit = () => {
   const [provider, setProvider] = useState("");
   const [search, setSearch] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [intervalSec, setIntervalSec] = useState(5);
+  const [lastRefresh, setLastRefresh] = useState<number | null>(null);
 
   const load = async () => {
     try {
       const { rows, stats_24h } = await api.otpAudit({ limit: 200, provider: provider || undefined });
       setRows(rows);
       setStats(stats_24h);
+      setLastRefresh(Math.floor(Date.now() / 1000));
     } catch {
       // silent — keep last data
     } finally {
@@ -77,10 +80,10 @@ const AgentOtpAudit = () => {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const i = setInterval(load, 8000);
+    const i = setInterval(load, intervalSec * 1000);
     return () => clearInterval(i);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, provider]);
+  }, [autoRefresh, provider, intervalSec]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -94,6 +97,38 @@ const AgentOtpAudit = () => {
     );
   }, [rows, search]);
 
+  // Group most recent scrape events per provider for the debug panel.
+  // Backend stores endpoint as a full URL with query string — we parse it
+  // so agents can see exactly which date range / currency the bot used.
+  const scrapeDebug = useMemo(() => {
+    const seen = new Map<string, AuditRow>();
+    for (const r of rows) {
+      if (r.event !== "scrape_ok" && r.event !== "scrape_fail") continue;
+      if (!seen.has(r.provider)) seen.set(r.provider, r);
+    }
+    return Array.from(seen.values()).map((r) => {
+      let path = r.endpoint || "";
+      const params: Array<[string, string]> = [];
+      try {
+        if (r.endpoint) {
+          // Endpoint may be a relative path like "/api/.../sms.json?date_from=..."
+          const u = new URL(r.endpoint, "https://x.local");
+          path = u.pathname;
+          u.searchParams.forEach((v, k) => params.push([k, v]));
+        }
+      } catch {
+        /* ignore parse errors — show raw endpoint */
+      }
+      return { row: r, path, params };
+    });
+  }, [rows]);
+
+  // Last 8 successfully credited OTPs — quick "did my OTP land?" panel.
+  const lastCredited = useMemo(
+    () => rows.filter((r) => r.event === "credited").slice(0, 8),
+    [rows]
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -103,10 +138,31 @@ const AgentOtpAudit = () => {
             OTP Audit Log
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Live trace of every OTP scrape, match, and credit. Refreshes every 8s.
+            Live trace of every OTP scrape, match, and credit. Refreshes every {intervalSec}s.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative hidden sm:block">
+            <select
+              value={intervalSec}
+              onChange={(e) => setIntervalSec(Number(e.target.value))}
+              className="appearance-none h-9 pl-3 pr-8 rounded-md bg-white/[0.04] border border-white/[0.1] text-xs text-foreground focus:outline-none focus:border-primary/50"
+              aria-label="Auto-refresh interval"
+            >
+              <option value={3} className="bg-[hsl(var(--card))]">Every 3s</option>
+              <option value={5} className="bg-[hsl(var(--card))]">Every 5s</option>
+              <option value={8} className="bg-[hsl(var(--card))]">Every 8s</option>
+              <option value={15} className="bg-[hsl(var(--card))]">Every 15s</option>
+              <option value={30} className="bg-[hsl(var(--card))]">Every 30s</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          </div>
+          {lastRefresh && (
+            <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-muted-foreground font-mono">
+              <Clock className="w-3 h-3" />
+              {ago(lastRefresh)}
+            </span>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -147,6 +203,117 @@ const AgentOtpAudit = () => {
           );
         })}
       </div>
+
+      {/* Scraper debug panel — last request URL + params per provider */}
+      {scrapeDebug.length > 0 && (
+        <GlassCard>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Wifi className="w-4 h-4 text-neon-cyan" />
+              <h2 className="text-sm font-display font-bold text-foreground">Scraper Debug — Last Request</h2>
+            </div>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              per provider
+            </span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {scrapeDebug.map(({ row, path, params }) => {
+              const ok = row.event === "scrape_ok";
+              return (
+                <div
+                  key={`${row.provider}-${row.id}`}
+                  className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-foreground font-mono uppercase font-bold">
+                        {row.provider}
+                      </span>
+                      <span className={cn(
+                        "text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md border",
+                        ok
+                          ? "text-neon-green bg-neon-green/10 border-neon-green/30"
+                          : "text-destructive bg-destructive/10 border-destructive/30"
+                      )}>
+                        {ok ? "OK" : "FAIL"}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground font-mono">{ago(row.ts)}</span>
+                  </div>
+
+                  <div className="flex items-start gap-1.5 text-[11px] font-mono text-muted-foreground break-all">
+                    <Link2 className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/60" />
+                    <span className="text-foreground/90">{path || "—"}</span>
+                  </div>
+
+                  {params.length > 0 && (
+                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                      {params.map(([k, v]) => (
+                        <div key={k} className="text-[10px] font-mono bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-1">
+                          <span className="text-muted-foreground/70">{k}=</span>
+                          <span className="text-foreground">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-2 flex items-center gap-3 text-[11px] font-mono">
+                    <span className="text-muted-foreground">
+                      rows_seen: <span className="text-foreground font-bold">{row.rows_seen ?? 0}</span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      matched: <span className="text-neon-amber font-bold">{row.matches_found ?? 0}</span>
+                    </span>
+                    {row.currency && (
+                      <span className="text-muted-foreground">
+                        currency: <span className="text-neon-amber font-bold">{row.currency}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {row.detail && (
+                    <div className="mt-1.5 text-[11px] text-muted-foreground/80">{row.detail}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Last 8 credited OTPs — quick scan */}
+      {lastCredited.length > 0 && (
+        <GlassCard>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-neon-green" />
+              <h2 className="text-sm font-display font-bold text-foreground">Last 8 Credited OTPs</h2>
+            </div>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              freshest first
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {lastCredited.map((r) => (
+              <div
+                key={r.id}
+                className="rounded-lg border border-neon-green/15 bg-neon-green/[0.04] p-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-mono uppercase text-muted-foreground">{r.provider}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{ago(r.ts)}</span>
+                </div>
+                <div className="mt-1 font-mono text-base font-bold text-neon-green tracking-wider">
+                  {r.otp_code || "—"}
+                </div>
+                {r.phone_number && (
+                  <div className="mt-0.5 font-mono text-[11px] text-foreground/80 truncate">{r.phone_number}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
 
       {/* Filters */}
       <GlassCard>
