@@ -24,6 +24,7 @@ const axios = require('axios');
 const AdmZip = require('adm-zip');
 const db = require('../lib/db');
 const { markOtpReceived } = require('../routes/numbers');
+const { logOtpEvent, trimIfDue } = require('../lib/otpAudit');
 
 const QUIET = process.env.NODE_ENV === 'production';
 const dlog = (...a) => { if (!QUIET) console.log(...a); };
