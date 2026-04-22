@@ -6,6 +6,16 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface AllocatedNumber {
   id: number;
@@ -120,6 +130,9 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
   }, [skipAllConfirm]);
+  // Styled confirmation dialog for the unified pool — replaces the native
+  // browser confirm() that looked alien and got cut off on small viewports.
+  const [confirmOpen, setConfirmOpen] = useState(false);
   // Persist the agent's chosen range key alongside the country so the
   // selection sticks across reloads.
   useEffect(() => {
@@ -455,35 +468,36 @@ const AgentGetNumber = () => {
   };
   const totalPoolSize = ranges.reduce((sum, r) => sum + r.count, 0);
 
+  // Build the confirmation summary for the unified-pool dialog
+  const confirmSummary = useMemo(() => {
+    if (provider !== "all" || !rangeName) return null;
+    const meta = allRanges.find((x) => x.key === rangeName);
+    const friendly = meta
+      ? (isAdmin ? meta.name : meta.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim())
+      : rangeName;
+    return {
+      friendly,
+      count: meta?.count ?? 0,
+      providerLabel: isAdmin ? meta?.provider_label || null : null,
+    };
+  }, [provider, rangeName, allRanges, isAdmin]);
+
   const handleGetNumber = async () => {
     if (maintenanceMode) {
       toast({ title: "Maintenance mode", description: maintenanceMessage, variant: "destructive" });
       return;
     }
-    // Confirmation prompt for the unified "All Servers" pool — agents
-    // sometimes pick it by accident thinking it's a single bot. We make it
-    // explicit that the chosen range belongs to a SPECIFIC underlying
-    // provider and ask them to confirm before billing kicks in. Skipped
-    // when the agent ticks "don't ask again" (persisted in localStorage).
-    if (provider === "all" && rangeName) {
-      if (!skipAllConfirm) {
-        const meta = allRanges.find((x) => x.key === rangeName);
-        // Same admin-vs-agent rule as the dropdown: only admins see "Server X".
-        const friendly = meta
-          ? (isAdmin ? meta.name : meta.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim())
-          : rangeName;
-        const target = meta ? `${friendly} — ${meta.count} available` : friendly;
-        const serverLine = isAdmin && meta?.provider_label
-          ? `\n\nThis range belongs to ${meta.provider_label}.`
-          : "";
-        const msg =
-          `You are about to allocate ${quantity} number${quantity > 1 ? "s" : ""} ` +
-          `from:\n\n${target}${serverLine}\n\n` +
-          `Continue?\n\n(Tip: tick OK to proceed. Cancel to pick a different range.)`;
-        const ok = window.confirm(msg);
-        if (!ok) return;
-      }
+    // Styled confirmation for the unified "All Servers" pool — opens a
+    // themed AlertDialog instead of the native browser confirm() which
+    // looked alien and got clipped on small viewports.
+    if (provider === "all" && rangeName && !skipAllConfirm) {
+      setConfirmOpen(true);
+      return;
     }
+    await runAllocation();
+  };
+
+  const runAllocation = async () => {
     // Re-check enabled providers RIGHT before allocating so the agent
     // never sends a request to a provider that just got disabled.
     const fresh = await refreshProviders();
@@ -775,9 +789,9 @@ const AgentGetNumber = () => {
 
         {provider === "all" && !isAdmin ? (
           /* ============ AGENT unified flow: Country → Range → Get ============ */
-          <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1.4fr_auto] gap-4 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_auto] gap-4 items-end">
             {/* Country (sticky — persists in localStorage) */}
-            <div className="space-y-2 relative" ref={allCountryRef}>
+            <div className="space-y-2 relative min-w-0" ref={allCountryRef}>
               <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
                 <span>Country</span>
                 <span className="text-[10px] text-muted-foreground/70 font-normal">
@@ -850,7 +864,7 @@ const AgentGetNumber = () => {
             </div>
 
             {/* Range — filtered by selected country */}
-            <div className="space-y-2 relative" ref={rangeRef}>
+            <div className="space-y-2 relative min-w-0" ref={rangeRef}>
               <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
                 <span>Range</span>
                 <span className="text-[10px] text-muted-foreground/70 font-normal">
@@ -932,7 +946,7 @@ const AgentGetNumber = () => {
             <Button
               onClick={handleGetNumber}
               disabled={loading || maintenanceMode || usedToday >= dailyLimit || !rangeName}
-              className="h-11 bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0 min-w-[180px]"
+              className="h-11 w-full md:w-auto md:min-w-[180px] bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0"
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
@@ -1417,6 +1431,62 @@ const AgentGetNumber = () => {
         </GlassCard>
         );
       })()}
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="bg-[hsl(var(--card))] border border-white/[0.1]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display">Confirm allocation</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  You are about to allocate{" "}
+                  <span className="text-foreground font-semibold">{quantity}</span>{" "}
+                  number{quantity > 1 ? "s" : ""} from:
+                </p>
+                {confirmSummary && (
+                  <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3 space-y-1">
+                    <div className="text-foreground font-medium break-words">
+                      {confirmSummary.friendly}
+                    </div>
+                    <div className="text-xs">
+                      <span className="text-neon-green font-semibold">
+                        {confirmSummary.count} available
+                      </span>
+                      {confirmSummary.providerLabel && (
+                        <span className="text-muted-foreground"> · {confirmSummary.providerLabel}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs">
+                  Tip: confirm to proceed, or cancel to pick a different range.
+                </p>
+                <label className="flex items-center gap-2 text-xs cursor-pointer select-none pt-1">
+                  <input
+                    type="checkbox"
+                    checked={skipAllConfirm}
+                    onChange={(e) => setSkipAllConfirm(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.04] accent-neon-cyan"
+                  />
+                  <span>Don't ask again on this device</span>
+                </label>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmOpen(false);
+                runAllocation();
+              }}
+              className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground"
+            >
+              Confirm & Get {quantity > 1 ? `${quantity} Numbers` : "Number"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
