@@ -328,7 +328,7 @@ export const api = {
   allRanges: () => request<{ ranges: {
     key: string; name: string; range: string; provider: string;
     provider_label: string; country_code: string | null;
-    country_name?: string | null; count: number;
+    country_name?: string | null; count: number; hot?: boolean;
   }[] }>("/numbers/all/ranges"),
   imsAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
@@ -511,6 +511,17 @@ export const api = {
     leaderboard: () => request<{ leaderboard: { id: number; username: string; otp_count: number; numbers_used?: number; earnings_bdt?: number }[] }>("/admin/leaderboard"),
     commissionTrend: (days = 14) => request<{ series: { label: string; value: number; count: number }[] }>(`/admin/commission-trend?days=${days}`),
     allocations: () => request<{ allocations: Allocation[] }>("/admin/allocations"),
+    poolInspector: () => request<{ countries: {
+      country_code: string;
+      country_name: string;
+      inferred: boolean;
+      total: number;
+      ranges: {
+        range: string;
+        total: number;
+        bots: { provider: string; label: string; count: number }[];
+      }[];
+    }[] }>("/admin/pool-inspector"),
     imsStatus: () => request<{ status: any }>("/admin/ims-status"),
     imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),
     imsStart: () => request<{ ok: boolean }>("/admin/ims-start", { method: "POST" }),

@@ -61,6 +61,7 @@ interface AllRange {
   country_code: string | null;
   country_name?: string | null;
   count: number;
+  hot?: boolean;
 }
 
 const AgentGetNumber = () => {
@@ -424,6 +425,13 @@ const AgentGetNumber = () => {
   const selectedAllCountry = allCountryList.find((c) => c.code === allCountry);
 
   const selectedRange = ranges.find((r) => r.name === rangeName);
+  // Hot-range lookup: backend marks ranges that received ≥3 allocations in
+  // the past hour. Helps agents discover which pool numbers are actually
+  // converting right now without admin guidance.
+  const isHotRange = (rangeKey: string) => {
+    if (provider !== "all") return false;
+    return !!allRanges.find((r) => r.key === rangeKey)?.hot;
+  };
   // Friendly label resolver. For the unified "All Servers" pool:
   //   • Admins see the full backend label, e.g. "TJ — Tajikistan 99293515XXXX (Server F)"
   //     so they can audit which underlying bot a range belongs to.
@@ -860,6 +868,7 @@ const AgentGetNumber = () => {
                     ? "Pick a country first"
                     : selectedRange ? (
                       <>
+                        {isHotRange(selectedRange.name) && <span className="mr-1">🔥</span>}
                         {labelForRange(selectedRange.name)}
                         <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
                           {selectedRange.count} avail
@@ -898,7 +907,12 @@ const AgentGetNumber = () => {
                             rangeName === r.name && "bg-primary/10 text-primary"
                           )}
                         >
-                          <span className="truncate">{labelForRange(r.name)}</span>
+                          <span className="truncate flex items-center gap-1.5">
+                            {isHotRange(r.name) && (
+                              <span title="Hot — high allocation rate in the last hour" className="shrink-0">🔥</span>
+                            )}
+                            {labelForRange(r.name)}
+                          </span>
                           <span className={cn(
                             "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0",
                             r.count > 50 ? "bg-neon-green/15 text-neon-green" :
