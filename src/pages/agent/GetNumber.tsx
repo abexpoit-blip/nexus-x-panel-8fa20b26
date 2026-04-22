@@ -46,8 +46,21 @@ export const SERVER_LABELS: Record<string, string> = {
   numpanel: "Server D",
   iprn: "Server E",
   iprn_sms: "Server F",
+  all: "All Servers",
 };
-type ServerId = "acchub" | "ims" | "msi" | "numpanel" | "iprn" | "iprn_sms";
+type ServerId = "acchub" | "ims" | "msi" | "numpanel" | "iprn" | "iprn_sms" | "all";
+
+// Unified-pool entry from /numbers/all/ranges. `name` is already the
+// "Country — Range (Server X)" label so we render it as-is.
+interface AllRange {
+  key: string;          // <providerId>::<rangeName>
+  name: string;         // display label
+  range: string;
+  provider: string;
+  provider_label: string;
+  country_code: string | null;
+  count: number;
+}
 
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
@@ -66,6 +79,8 @@ const AgentGetNumber = () => {
   const [operators, setOperators] = useState<Operator[]>([]);
   const [operatorId, setOperatorId] = useState<number | "">("");
   const [ranges, setRanges] = useState<Range[]>([]);
+  // Unified-pool ranges (only used when provider === 'all')
+  const [allRanges, setAllRanges] = useState<AllRange[]>([]);
   const [rangeName, setRangeName] = useState<string>("");
   const [rangeSearch, setRangeSearch] = useState("");
   const [rangeOpen, setRangeOpen] = useState(false);
@@ -254,16 +269,31 @@ const AgentGetNumber = () => {
     } else if (provider === "msi") {
       api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => setRanges([]));
       setCountries([]);
+    } else if (provider === "all") {
+      api.allRanges().then(({ ranges }) => {
+        setAllRanges(ranges);
+        // Also feed the shared `ranges` state (using key as name) so the
+        // existing dropdown UI can render without branching everywhere.
+        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
+      }).catch(() => { setAllRanges([]); setRanges([]); });
+      setCountries([]);
     } else {
       setRanges([]);
+      setAllRanges([]);
       api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => setCountries([]));
     }
   }, [provider]);
 
   // Refresh range counts every 10s while a range-based server is selected
   useEffect(() => {
-    if (provider !== "ims" && provider !== "msi") return;
-    const fetcher = provider === "ims" ? api.imsRanges : api.msiRanges;
+    if (provider !== "ims" && provider !== "msi" && provider !== "all") return;
+    const fetcher = provider === "ims" ? api.imsRanges
+                   : provider === "msi" ? api.msiRanges
+                   : async () => {
+                       const { ranges } = await api.allRanges();
+                       setAllRanges(ranges);
+                       return { ranges: ranges.map((r) => ({ name: r.key, count: r.count })) };
+                     };
     const i = setInterval(() => {
       fetcher().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     }, 10000);
@@ -271,7 +301,7 @@ const AgentGetNumber = () => {
   }, [provider]);
 
   useEffect(() => {
-    if (provider === "ims" || provider === "msi" || !countryId) { setOperators([]); setOperatorId(""); return; }
+    if (provider === "ims" || provider === "msi" || provider === "all" || !countryId) { setOperators([]); setOperatorId(""); return; }
     setOperatorId("");
     api.operators(provider, Number(countryId)).then(({ operators }) => setOperators(operators)).catch(() => {});
   }, [countryId, provider]);
@@ -296,11 +326,23 @@ const AgentGetNumber = () => {
 
   const filteredRanges = useMemo(() => {
     const q = rangeSearch.trim().toLowerCase();
+    // For unified pool, match against the friendly label (country/provider/range), not the key.
+    const labelOf = (key: string) => {
+      if (provider !== "all") return key;
+      const m = allRanges.find((x) => x.key === key);
+      return m ? m.name : key;
+    };
     if (!q) return ranges;
-    return ranges.filter((r) => r.name.toLowerCase().includes(q));
-  }, [ranges, rangeSearch]);
+    return ranges.filter((r) => labelOf(r.name).toLowerCase().includes(q));
+  }, [ranges, rangeSearch, provider, allRanges]);
 
   const selectedRange = ranges.find((r) => r.name === rangeName);
+  // Friendly label resolver — for 'all' we show "Country — Range (Server X)" instead of the raw key.
+  const labelForRange = (key: string): string => {
+    if (provider !== "all") return key;
+    const m = allRanges.find((x) => x.key === key);
+    return m ? m.name : key;
+  };
   const totalPoolSize = ranges.reduce((sum, r) => sum + r.count, 0);
 
   const handleGetNumber = async () => {
@@ -321,7 +363,7 @@ const AgentGetNumber = () => {
       });
       return;
     }
-    if (provider === "ims" || provider === "msi") {
+    if (provider === "ims" || provider === "msi" || provider === "all") {
       if (!rangeName) { toast({ title: "Select a range", variant: "destructive" }); return; }
     } else if (!countryId || !operatorId) {
       toast({ title: "Select country & operator", variant: "destructive" });
@@ -331,7 +373,7 @@ const AgentGetNumber = () => {
     try {
       const { allocated, errors } = await api.getNumber({
         provider,
-        ...(provider === "ims" || provider === "msi"
+        ...(provider === "ims" || provider === "msi" || provider === "all"
           ? { range: rangeName }
           : { country_id: Number(countryId), operator_id: Number(operatorId) }),
         count: quantity,
@@ -354,6 +396,10 @@ const AgentGetNumber = () => {
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
       else if (provider === "msi") api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
+      else if (provider === "all") api.allRanges().then(({ ranges }) => {
+        setAllRanges(ranges);
+        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
+      }).catch(() => {});
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       // Dedicated state for the soft-OFF case. Backend returns
@@ -557,7 +603,7 @@ const AgentGetNumber = () => {
           </div>
         </div>
 
-        {provider === "ims" || provider === "msi" ? (
+        {provider === "ims" || provider === "msi" || provider === "all" ? (
           /* ============ Server B/C (range-based): single Range dropdown ============ */
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-end">
             <div className="space-y-2 relative" ref={rangeRef}>
@@ -575,7 +621,7 @@ const AgentGetNumber = () => {
                 <span className={cn("truncate", !selectedRange && "text-muted-foreground")}>
                   {selectedRange ? (
                     <>
-                      {selectedRange.name}
+                      {labelForRange(selectedRange.name)}
                       <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
                         {selectedRange.count} avail
                       </span>
@@ -614,7 +660,7 @@ const AgentGetNumber = () => {
                             rangeName === r.name && "bg-primary/10 text-primary"
                           )}
                         >
-                          <span className="truncate">{r.name}</span>
+                          <span className="truncate">{labelForRange(r.name)}</span>
                           <span className={cn(
                             "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0",
                             r.count > 50 ? "bg-neon-green/15 text-neon-green" :

@@ -322,6 +322,13 @@ export const api = {
     request<{ allocated: any[]; errors: string[] }>("/numbers/get", { method: "POST", body: JSON.stringify(body) }),
   imsRanges: () => request<{ ranges: { name: string; count: number }[] }>("/numbers/ims/ranges"),
   msiRanges: () => request<{ ranges: { name: string; count: number }[] }>("/numbers/msi/ranges"),
+  // Unified pool across every enabled bot (ims/msi/iprn/iprn_sms/numpanel).
+  // Each entry's `key` is "<providerId>::<rangeName>" and is what the agent
+  // passes back as `range` when calling getNumber({ provider: 'all', range: key }).
+  allRanges: () => request<{ ranges: {
+    key: string; name: string; range: string; provider: string;
+    provider_label: string; country_code: string | null; count: number;
+  }[] }>("/numbers/all/ranges"),
   imsAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
   msiAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>

@@ -36,7 +36,16 @@ router.get('/config', authRequired, (req, res) => {
 // dead options (and we don't waste bandwidth listing empty pools).
 router.get('/providers', authRequired, (req, res) => {
   const all = providers.list();
-  res.json({ providers: all.filter((p) => isProviderEnabled(p.id)) });
+  const enabled = all.filter((p) => isProviderEnabled(p.id));
+  // Append a virtual "all" provider when at least 2 manual-pool providers are enabled,
+  // so the agent can pick from a unified pool spanning every bot.
+  const POOL_PROVIDERS = ['ims', 'msi', 'iprn', 'iprn_sms', 'numpanel'];
+  const enabledPool = enabled.filter((p) => POOL_PROVIDERS.includes(p.id));
+  const out = enabled.slice();
+  if (enabledPool.length >= 2) {
+    out.push({ id: 'all', name: 'All Servers', mode: 'manual' });
+  }
+  res.json({ providers: out });
 });
 
 // GET /api/numbers/countries/:provider
@@ -75,6 +84,55 @@ router.get('/msi/ranges', authRequired, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/numbers/all/ranges — UNION of every manual-pool provider's ranges,
+// labelled with the country prefix + provider tag so the agent can pick from
+// any bot's pool in one place. The `key` field is `<providerId>::<rangeName>`
+// and is what the agent should pass back as `range` when calling /numbers/get
+// with provider='all'. The display `name` is "Country — Range (Server X)".
+router.get('/all/ranges', authRequired, async (req, res) => {
+  const POOL_LABELS = {
+    ims: 'Server B', msi: 'Server C', numpanel: 'Server D',
+    iprn: 'Server E', iprn_sms: 'Server F',
+  };
+  try {
+    const out = [];
+    for (const pid of Object.keys(POOL_LABELS)) {
+      if (!isProviderEnabled(pid)) continue;
+      let p;
+      try { p = providers.get(pid); } catch (_) { continue; }
+      let ranges = [];
+      try { ranges = await p.listRanges(); } catch (_) { continue; }
+      for (const r of ranges || []) {
+        if (!r || !r.name || !r.count) continue;
+        // Try to get a representative country for this range from the pool table.
+        // Falls back to whatever the range name already contains.
+        let country = null;
+        try {
+          const row = db.prepare(
+            "SELECT country_code FROM allocations WHERE provider=? AND status='pool' AND COALESCE(operator,'Unknown')=? AND country_code IS NOT NULL LIMIT 1"
+          ).get(pid, r.name);
+          country = row?.country_code || null;
+        } catch (_) {}
+        const label = country
+          ? `${country} — ${r.name} (${POOL_LABELS[pid]})`
+          : `${r.name} (${POOL_LABELS[pid]})`;
+        out.push({
+          key: `${pid}::${r.name}`,
+          name: label,
+          range: r.name,
+          provider: pid,
+          provider_label: POOL_LABELS[pid],
+          country_code: country,
+          count: r.count,
+        });
+      }
+    }
+    // Sort by country then range name so related entries cluster together
+    out.sort((a, b) => (a.country_code || 'zz').localeCompare(b.country_code || 'zz') || a.name.localeCompare(b.name));
+    res.json({ ranges: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /api/numbers/get — agent allocates a fresh number
 router.post('/get', authRequired, async (req, res) => {
   try {
@@ -107,20 +165,42 @@ router.post('/get', authRequired, async (req, res) => {
     }
 
     let provider;
-    try { provider = providers.get(providerId); }
+    let effectiveProviderId = providerId;
+    let effectiveRange = range;
+    // Virtual "all" provider — decode `range` ("<providerId>::<rangeName>")
+    // and dispatch to the underlying pool provider. This lets the agent pick
+    // from any bot's pool without us needing per-provider UI logic.
+    if (providerId === 'all') {
+      const raw = (range || '').toString();
+      const [pid, ...rest] = raw.split('::');
+      const rname = rest.join('::');
+      if (!pid || !rname) {
+        return res.status(400).json({ error: 'Invalid range key for All Servers — expected "<provider>::<range>"' });
+      }
+      if (!isProviderEnabled(pid)) {
+        return res.status(403).json({
+          code: 'PROVIDER_DISABLED', provider: pid,
+          error: `Underlying provider ${pid} is disabled.`,
+          allocated: [], errors: [],
+        });
+      }
+      effectiveProviderId = pid;
+      effectiveRange = rname;
+    }
+    try { provider = providers.get(effectiveProviderId); }
     catch (e) { return res.status(400).json({ error: e.message }); }
 
     // Soft-OFF guard — admin disabled this provider. Defense-in-depth: even
     // if the agent UI somehow shows a stale option, we refuse here so a
     // disabled bot can never allocate numbers (and we don't waste a poll).
-    if (!isProviderEnabled(providerId)) {
+    if (!isProviderEnabled(effectiveProviderId)) {
       return res.status(403).json({
         // Machine-readable code so the UI can switch on it directly
         // instead of fragile regex on the human-readable `error` string.
         code: 'PROVIDER_DISABLED',
-        provider: providerId,
-        provider_name: provider.name || providerId,
-        error: `${provider.name || providerId} is currently disabled by admin. Please pick another source.`,
+        provider: effectiveProviderId,
+        provider_name: provider.name || effectiveProviderId,
+        error: `${provider.name || effectiveProviderId} is currently disabled by admin. Please pick another source.`,
         allocated: [], errors: [],
       });
     }
@@ -132,7 +212,7 @@ router.post('/get', authRequired, async (req, res) => {
     const CONCURRENCY = 10;
     const fetchOne = () => provider.getNumber({
       countryId: country_id, operatorId: operator_id,
-      countryCode: country_code, operator, range,
+      countryCode: country_code, operator, range: effectiveRange,
     });
     const fetched = []; // [{ ok: true, r } | { ok: false, msg }]
     let cursor = 0;
@@ -173,7 +253,7 @@ router.post('/get', authRequired, async (req, res) => {
           upPool.run(userId, r.__pool_id);
           id = r.__pool_id;
         } else {
-          const result = insAlloc.run(userId, providerId, r.provider_ref || null, r.phone_number, r.operator || null, r.country_code || null);
+          const result = insAlloc.run(userId, effectiveProviderId, r.provider_ref || null, r.phone_number, r.operator || null, r.country_code || null);
           id = result.lastInsertRowid;
         }
         allocated.push({ id, phone_number: r.phone_number, operator: r.operator, otp: null, status: 'active' });
@@ -181,7 +261,7 @@ router.post('/get', authRequired, async (req, res) => {
     });
     writeAll();
 
-    logFromReq(req, 'allocation', { meta: { provider: providerId, count: allocated.length, errors: errors.length, errorDetails: errors.slice(0, 3) } });
+    logFromReq(req, 'allocation', { meta: { provider: effectiveProviderId, requested_via: providerId, count: allocated.length, errors: errors.length, errorDetails: errors.slice(0, 3) } });
     res.json({ allocated, errors });
   } catch (fatal) {
     // Final safety net — don't let ANY exception bubble up as 500
