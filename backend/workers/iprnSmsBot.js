@@ -670,6 +670,8 @@ function start() {
   status.baseUrl = BASE_URL;
   status.smsType = TYPE;
   status.numbersIntervalSec = NUMBERS_INTERVAL;
+  status.otpIntervalSec = OTP_INTERVAL;
+  status.otpCurrency = OTP_CURRENCY;
 
   if (!ENABLED) {
     console.log('[iprn_sms-bot] disabled (set IPRN_SMS_ENABLED=true to enable)');
@@ -691,6 +693,11 @@ function start() {
 
   runNumbersLoop().catch(() => {});
   numbersTimer = setInterval(runNumbersLoop, NUMBERS_INTERVAL * 1000);
+
+  // Kick off OTP scrape loop (currency-filtered stats endpoint)
+  console.log(`[iprn_sms-bot] OTP poller starting → currency=${OTP_CURRENCY} interval=${OTP_INTERVAL}s`);
+  runOtpLoop().catch(() => {});
+  otpTimer = setInterval(runOtpLoop, OTP_INTERVAL * 1000);
 }
 
 function stop() {
