@@ -326,11 +326,23 @@ const AgentGetNumber = () => {
 
   const filteredRanges = useMemo(() => {
     const q = rangeSearch.trim().toLowerCase();
+    // For unified pool, match against the friendly label (country/provider/range), not the key.
+    const labelOf = (key: string) => {
+      if (provider !== "all") return key;
+      const m = allRanges.find((x) => x.key === key);
+      return m ? m.name : key;
+    };
     if (!q) return ranges;
-    return ranges.filter((r) => r.name.toLowerCase().includes(q));
-  }, [ranges, rangeSearch]);
+    return ranges.filter((r) => labelOf(r.name).toLowerCase().includes(q));
+  }, [ranges, rangeSearch, provider, allRanges]);
 
   const selectedRange = ranges.find((r) => r.name === rangeName);
+  // Friendly label resolver — for 'all' we show "Country — Range (Server X)" instead of the raw key.
+  const labelForRange = (key: string): string => {
+    if (provider !== "all") return key;
+    const m = allRanges.find((x) => x.key === key);
+    return m ? m.name : key;
+  };
   const totalPoolSize = ranges.reduce((sum, r) => sum + r.count, 0);
 
   const handleGetNumber = async () => {
