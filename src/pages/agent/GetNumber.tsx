@@ -345,11 +345,27 @@ const AgentGetNumber = () => {
   }, [ranges, rangeSearch, provider, allRanges]);
 
   const selectedRange = ranges.find((r) => r.name === rangeName);
-  // Friendly label resolver — for 'all' we show "Country — Range (Server X)" instead of the raw key.
+  const isAdmin = user?.role === "admin";
+  // Friendly label resolver. For the unified "All Servers" pool:
+  //   • Admins see the full backend label, e.g. "TJ — Tajikistan 99293515XXXX (Server F)"
+  //     so they can audit which underlying bot a range belongs to.
+  //   • Agents see ONLY country + range, e.g. "TJ — Tajikistan 99293515XXXX",
+  //     because the underlying provider is internal info they don't need.
   const labelForRange = (key: string): string => {
     if (provider !== "all") return key;
     const m = allRanges.find((x) => x.key === key);
-    return m ? m.name : key;
+    if (!m) return key;
+    if (isAdmin) return m.name;
+    // Strip the trailing "(Server X)" tag for non-admins
+    return m.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim();
+  };
+  // Provider tag shown next to the count badge — admin-only, so the
+  // dropdown stays consistent: "<count> avail · Server X" for admins,
+  // just "<count> avail" for agents.
+  const providerTagForRange = (key: string): string | null => {
+    if (provider !== "all" || !isAdmin) return null;
+    const m = allRanges.find((x) => x.key === key);
+    return m?.provider_label || null;
   };
   const totalPoolSize = ranges.reduce((sum, r) => sum + r.count, 0);
 
@@ -366,13 +382,17 @@ const AgentGetNumber = () => {
     if (provider === "all" && rangeName) {
       if (!skipAllConfirm) {
         const meta = allRanges.find((x) => x.key === rangeName);
-        const target = meta
-          ? `${meta.name} — ${meta.count} available`
+        // Same admin-vs-agent rule as the dropdown: only admins see "Server X".
+        const friendly = meta
+          ? (isAdmin ? meta.name : meta.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim())
           : rangeName;
+        const target = meta ? `${friendly} — ${meta.count} available` : friendly;
+        const serverLine = isAdmin && meta?.provider_label
+          ? `\n\nThis range belongs to ${meta.provider_label}.`
+          : "";
         const msg =
           `You are about to allocate ${quantity} number${quantity > 1 ? "s" : ""} ` +
-          `from:\n\n${target}\n\n` +
-          `This range belongs to ${meta?.provider_label || "an underlying server"}. ` +
+          `from:\n\n${target}${serverLine}\n\n` +
           `Continue?\n\n(Tip: tick OK to proceed. Cancel to pick a different range.)`;
         const ok = window.confirm(msg);
         if (!ok) return;
@@ -642,9 +662,9 @@ const AgentGetNumber = () => {
               <p className="text-xs text-foreground">
                 <span className="font-semibold">All Servers mode:</span>{" "}
                 <span className="text-muted-foreground">
-                  Each range belongs to one underlying bot (Server B/C/D/E/F).
-                  You'll be asked to confirm before every allocation so a wrong
-                  pick doesn't burn balance on the wrong server.
+                  Pick a country and range — we'll fetch a fresh number from the
+                  matching pool. You'll be asked to confirm before every
+                  allocation so a wrong pick doesn't burn balance.
                 </span>
               </p>
               <label className="mt-1.5 inline-flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
@@ -680,7 +700,7 @@ const AgentGetNumber = () => {
                     <>
                       {labelForRange(selectedRange.name)}
                       <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
-                        {selectedRange.count} avail
+                        {selectedRange.count} avail{providerTagForRange(selectedRange.name) ? ` · ${providerTagForRange(selectedRange.name)}` : ""}
                       </span>
                     </>
                   ) : ranges.length === 0 ? "No ranges available — wait for refill" : "Select a range..."}
@@ -718,13 +738,20 @@ const AgentGetNumber = () => {
                           )}
                         >
                           <span className="truncate">{labelForRange(r.name)}</span>
-                          <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0",
-                            r.count > 50 ? "bg-neon-green/15 text-neon-green" :
-                            r.count > 10 ? "bg-neon-amber/15 text-neon-amber" :
-                            "bg-destructive/15 text-destructive"
-                          )}>
-                            {r.count}
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            {providerTagForRange(r.name) && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-muted-foreground font-mono">
+                                {providerTagForRange(r.name)}
+                              </span>
+                            )}
+                            <span className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold",
+                              r.count > 50 ? "bg-neon-green/15 text-neon-green" :
+                              r.count > 10 ? "bg-neon-amber/15 text-neon-amber" :
+                              "bg-destructive/15 text-destructive"
+                            )}>
+                              {r.count} avail
+                            </span>
                           </span>
                         </button>
                       ))
