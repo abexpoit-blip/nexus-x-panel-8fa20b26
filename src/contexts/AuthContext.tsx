@@ -62,9 +62,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }).catch(() => {});
   }, []);
 
-  const login = useCallback(async (username: string, password: string): Promise<User | null> => {
+  const login = useCallback(async (username: string, password: string, surface: "agent" | "admin" = "agent"): Promise<User | null> => {
     try {
-      const { token, user } = await api.login(username, password);
+      const { token, user } = await api.login(username, password, surface);
       tokenStore.set(token);
       localStorage.setItem("nexus_user", JSON.stringify(user));
       localStorage.removeItem(IMP_KEY);
