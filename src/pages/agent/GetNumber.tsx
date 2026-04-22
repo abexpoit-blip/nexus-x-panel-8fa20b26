@@ -106,6 +106,14 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_auto_release", autoRelease ? "1" : "0");
   }, [autoRelease]);
+  // "Don't ask again" preference for the All-Servers confirmation prompt.
+  // Persisted in localStorage so the agent's choice survives reloads.
+  const [skipAllConfirm, setSkipAllConfirm] = useState<boolean>(
+    () => localStorage.getItem("nx_skip_all_confirm") === "1"
+  );
+  useEffect(() => {
+    localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
+  }, [skipAllConfirm]);
   // Browser desktop notification permission state
   const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
     () => (typeof Notification !== "undefined" ? Notification.permission : "denied")
@@ -349,6 +357,26 @@ const AgentGetNumber = () => {
     if (maintenanceMode) {
       toast({ title: "Maintenance mode", description: maintenanceMessage, variant: "destructive" });
       return;
+    }
+    // Confirmation prompt for the unified "All Servers" pool — agents
+    // sometimes pick it by accident thinking it's a single bot. We make it
+    // explicit that the chosen range belongs to a SPECIFIC underlying
+    // provider and ask them to confirm before billing kicks in. Skipped
+    // when the agent ticks "don't ask again" (persisted in localStorage).
+    if (provider === "all" && rangeName) {
+      if (!skipAllConfirm) {
+        const meta = allRanges.find((x) => x.key === rangeName);
+        const target = meta
+          ? `${meta.name} — ${meta.count} available`
+          : rangeName;
+        const msg =
+          `You are about to allocate ${quantity} number${quantity > 1 ? "s" : ""} ` +
+          `from:\n\n${target}\n\n` +
+          `This range belongs to ${meta?.provider_label || "an underlying server"}. ` +
+          `Continue?\n\n(Tip: tick OK to proceed. Cancel to pick a different range.)`;
+        const ok = window.confirm(msg);
+        if (!ok) return;
+      }
     }
     // Re-check enabled providers RIGHT before allocating so the agent
     // never sends a request to a provider that just got disabled.
@@ -602,6 +630,35 @@ const AgentGetNumber = () => {
             ))}
           </div>
         </div>
+
+        {provider === "all" && (
+          /* Unified-pool warning + "don't ask again" toggle. We surface this
+             prominently because each range in this list belongs to ONE
+             specific underlying bot — the agent should know exactly which
+             before allocating (the dropdown labels show "Server X" too). */
+          <div className="mb-4 px-3 py-2.5 rounded-lg border border-neon-cyan/25 bg-neon-cyan/[0.05] flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-neon-cyan shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-foreground">
+                <span className="font-semibold">All Servers mode:</span>{" "}
+                <span className="text-muted-foreground">
+                  Each range belongs to one underlying bot (Server B/C/D/E/F).
+                  You'll be asked to confirm before every allocation so a wrong
+                  pick doesn't burn balance on the wrong server.
+                </span>
+              </p>
+              <label className="mt-1.5 inline-flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={skipAllConfirm}
+                  onChange={(e) => setSkipAllConfirm(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.04] accent-neon-cyan"
+                />
+                <span>Don't ask again on this device</span>
+              </label>
+            </div>
+          </div>
+        )}
 
         {provider === "ims" || provider === "msi" || provider === "all" ? (
           /* ============ Server B/C (range-based): single Range dropdown ============ */
