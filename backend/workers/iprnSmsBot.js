@@ -524,8 +524,34 @@ async function scrapeNow() {
   }
 }
 
+// Standalone credential check — re-reads creds from settings/env, performs a
+// full /login + /login_check round-trip, and verifies a protected endpoint.
+// Does NOT touch the running bot's timers; it just reuses the shared session.
+// Returns { ok, username, base_url, loggedIn, latency_ms, error? }.
+async function testLogin() {
+  const t0 = Date.now();
+  // Refresh creds from DB/env so the test reflects the latest UI save.
+  const c = resolveCreds();
+  ENABLED = c.ENABLED; BASE_URL = c.BASE_URL; USERNAME = c.USERNAME; PASSWORD = c.PASSWORD; TYPE = c.TYPE;
+  if (!USERNAME || !PASSWORD) {
+    return { ok: false, error: 'Username or password is empty', latency_ms: Date.now() - t0 };
+  }
+  try {
+    await login();
+    return {
+      ok: true,
+      username: USERNAME,
+      base_url: BASE_URL,
+      loggedIn: true,
+      latency_ms: Date.now() - t0,
+    };
+  } catch (e) {
+    return { ok: false, error: e.message, username: USERNAME, base_url: BASE_URL, latency_ms: Date.now() - t0 };
+  }
+}
+
 module.exports = {
   start, stop, restart, scrapeNow, getStatus,
-  getRecentOtpFor, logEvent,
+  getRecentOtpFor, logEvent, testLogin,
   getCookieMeta, clearPersistedCookies, loadCookies,
 };

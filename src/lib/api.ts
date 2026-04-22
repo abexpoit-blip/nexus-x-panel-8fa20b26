@@ -742,6 +742,11 @@ export const api = {
       request<{ has_cookies: boolean; count: number; saved_at: number | null; names?: string[] }>("/admin/iprn-sms-cookies"),
     cookiesClear: () =>
       request<{ ok: boolean }>("/admin/iprn-sms-cookies", { method: "DELETE" }),
+    testLogin: () =>
+      request<{ ok: boolean; username?: string; base_url?: string; loggedIn?: boolean; latency_ms: number; error?: string }>(
+        "/admin/iprn-sms-test-login",
+        { method: "POST" },
+      ),
     numbers: (params: { status?: string; q?: string; limit?: number; offset?: number } = {}) => {
       const qs = new URLSearchParams();
       if (params.status) qs.set("status", params.status);
