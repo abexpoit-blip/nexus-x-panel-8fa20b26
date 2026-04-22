@@ -97,6 +97,38 @@ const AgentOtpAudit = () => {
     );
   }, [rows, search]);
 
+  // Group most recent scrape events per provider for the debug panel.
+  // Backend stores endpoint as a full URL with query string — we parse it
+  // so agents can see exactly which date range / currency the bot used.
+  const scrapeDebug = useMemo(() => {
+    const seen = new Map<string, AuditRow>();
+    for (const r of rows) {
+      if (r.event !== "scrape_ok" && r.event !== "scrape_fail") continue;
+      if (!seen.has(r.provider)) seen.set(r.provider, r);
+    }
+    return Array.from(seen.values()).map((r) => {
+      let path = r.endpoint || "";
+      const params: Array<[string, string]> = [];
+      try {
+        if (r.endpoint) {
+          // Endpoint may be a relative path like "/api/.../sms.json?date_from=..."
+          const u = new URL(r.endpoint, "https://x.local");
+          path = u.pathname;
+          u.searchParams.forEach((v, k) => params.push([k, v]));
+        }
+      } catch {
+        /* ignore parse errors — show raw endpoint */
+      }
+      return { row: r, path, params };
+    });
+  }, [rows]);
+
+  // Last 8 successfully credited OTPs — quick "did my OTP land?" panel.
+  const lastCredited = useMemo(
+    () => rows.filter((r) => r.event === "credited").slice(0, 8),
+    [rows]
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
