@@ -106,6 +106,14 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_auto_release", autoRelease ? "1" : "0");
   }, [autoRelease]);
+  // "Don't ask again" preference for the All-Servers confirmation prompt.
+  // Persisted in localStorage so the agent's choice survives reloads.
+  const [skipAllConfirm, setSkipAllConfirm] = useState<boolean>(
+    () => localStorage.getItem("nx_skip_all_confirm") === "1"
+  );
+  useEffect(() => {
+    localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
+  }, [skipAllConfirm]);
   // Browser desktop notification permission state
   const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
     () => (typeof Notification !== "undefined" ? Notification.permission : "denied")
