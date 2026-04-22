@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   RefreshCw, ScrollText, Search, CheckCircle2, XCircle, Radio,
-  AlertTriangle, Wallet, ChevronDown,
+  AlertTriangle, Wallet, ChevronDown, Link2, Wifi, Clock,
 } from "lucide-react";
 
 type AuditRow = {
@@ -56,12 +56,15 @@ const AgentOtpAudit = () => {
   const [provider, setProvider] = useState("");
   const [search, setSearch] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [intervalSec, setIntervalSec] = useState(5);
+  const [lastRefresh, setLastRefresh] = useState<number | null>(null);
 
   const load = async () => {
     try {
       const { rows, stats_24h } = await api.otpAudit({ limit: 200, provider: provider || undefined });
       setRows(rows);
       setStats(stats_24h);
+      setLastRefresh(Math.floor(Date.now() / 1000));
     } catch {
       // silent — keep last data
     } finally {
@@ -77,10 +80,10 @@ const AgentOtpAudit = () => {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const i = setInterval(load, 8000);
+    const i = setInterval(load, intervalSec * 1000);
     return () => clearInterval(i);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, provider]);
+  }, [autoRefresh, provider, intervalSec]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
