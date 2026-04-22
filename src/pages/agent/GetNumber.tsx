@@ -46,8 +46,21 @@ export const SERVER_LABELS: Record<string, string> = {
   numpanel: "Server D",
   iprn: "Server E",
   iprn_sms: "Server F",
+  all: "All Servers",
 };
-type ServerId = "acchub" | "ims" | "msi" | "numpanel" | "iprn" | "iprn_sms";
+type ServerId = "acchub" | "ims" | "msi" | "numpanel" | "iprn" | "iprn_sms" | "all";
+
+// Unified-pool entry from /numbers/all/ranges. `name` is already the
+// "Country — Range (Server X)" label so we render it as-is.
+interface AllRange {
+  key: string;          // <providerId>::<rangeName>
+  name: string;         // display label
+  range: string;
+  provider: string;
+  provider_label: string;
+  country_code: string | null;
+  count: number;
+}
 
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
@@ -66,6 +79,8 @@ const AgentGetNumber = () => {
   const [operators, setOperators] = useState<Operator[]>([]);
   const [operatorId, setOperatorId] = useState<number | "">("");
   const [ranges, setRanges] = useState<Range[]>([]);
+  // Unified-pool ranges (only used when provider === 'all')
+  const [allRanges, setAllRanges] = useState<AllRange[]>([]);
   const [rangeName, setRangeName] = useState<string>("");
   const [rangeSearch, setRangeSearch] = useState("");
   const [rangeOpen, setRangeOpen] = useState(false);
