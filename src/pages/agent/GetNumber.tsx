@@ -868,6 +868,7 @@ const AgentGetNumber = () => {
                     ? "Pick a country first"
                     : selectedRange ? (
                       <>
+                        {isHotRange(selectedRange.name) && <span className="mr-1">🔥</span>}
                         {labelForRange(selectedRange.name)}
                         <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
                           {selectedRange.count} avail
