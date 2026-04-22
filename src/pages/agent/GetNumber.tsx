@@ -269,16 +269,31 @@ const AgentGetNumber = () => {
     } else if (provider === "msi") {
       api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => setRanges([]));
       setCountries([]);
+    } else if (provider === "all") {
+      api.allRanges().then(({ ranges }) => {
+        setAllRanges(ranges);
+        // Also feed the shared `ranges` state (using key as name) so the
+        // existing dropdown UI can render without branching everywhere.
+        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
+      }).catch(() => { setAllRanges([]); setRanges([]); });
+      setCountries([]);
     } else {
       setRanges([]);
+      setAllRanges([]);
       api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => setCountries([]));
     }
   }, [provider]);
 
   // Refresh range counts every 10s while a range-based server is selected
   useEffect(() => {
-    if (provider !== "ims" && provider !== "msi") return;
-    const fetcher = provider === "ims" ? api.imsRanges : api.msiRanges;
+    if (provider !== "ims" && provider !== "msi" && provider !== "all") return;
+    const fetcher = provider === "ims" ? api.imsRanges
+                   : provider === "msi" ? api.msiRanges
+                   : async () => {
+                       const { ranges } = await api.allRanges();
+                       setAllRanges(ranges);
+                       return { ranges: ranges.map((r) => ({ name: r.key, count: r.count })) };
+                     };
     const i = setInterval(() => {
       fetcher().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     }, 10000);
@@ -286,7 +301,7 @@ const AgentGetNumber = () => {
   }, [provider]);
 
   useEffect(() => {
-    if (provider === "ims" || provider === "msi" || !countryId) { setOperators([]); setOperatorId(""); return; }
+    if (provider === "ims" || provider === "msi" || provider === "all" || !countryId) { setOperators([]); setOperatorId(""); return; }
     setOperatorId("");
     api.operators(provider, Number(countryId)).then(({ operators }) => setOperators(operators)).catch(() => {});
   }, [countryId, provider]);
