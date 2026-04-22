@@ -917,11 +917,11 @@ const AgentGetNumber = () => {
                           key={r.name}
                           onClick={() => { setRangeName(r.name); setRangeOpen(false); setRangeSearch(""); }}
                           className={cn(
-                            "w-full px-3 py-2.5 text-left text-sm flex items-center justify-between gap-2 hover:bg-white/[0.06] transition-colors",
+                            "w-full px-3 py-2.5 text-left text-sm flex items-start justify-between gap-2 hover:bg-white/[0.06] transition-colors",
                             rangeName === r.name && "bg-primary/10 text-primary"
                           )}
                         >
-                          <span className="truncate flex items-center gap-1.5">
+                          <span className="min-w-0 break-words flex items-start gap-1.5 leading-tight">
                             {isHotRange(r.name) && (
                               <span title="Hot — high allocation rate in the last hour" className="shrink-0">🔥</span>
                             )}
