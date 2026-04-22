@@ -603,7 +603,7 @@ router.post('/ims/otp', authRequired, adminOnly, async (req, res) => {
 // =============================================================
 // Helper: when an OTP is confirmed, write CDR + credit agent
 // =============================================================
-async function markOtpReceived(allocation, otpCode, cli = null) {
+async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null) {
   const { agent_amount } = agentPayout({
     provider: allocation.provider,
     country_code: allocation.country_code,
@@ -663,6 +663,25 @@ async function markOtpReceived(allocation, otpCode, cli = null) {
     `).run(allocation.user_id, 'OTP received', notifMsg);
   });
   tx();
+
+  // Best-effort audit row — agent-visible "credited" event so they can see
+  // the full lifecycle of their OTP (scrape → match → credit).
+  try {
+    const { logOtpEvent } = require('../lib/otpAudit');
+    logOtpEvent({
+      provider: allocation.provider,
+      event: 'credited',
+      user_id: allocation.user_id,
+      allocation_id: allocation.id,
+      phone_number: allocation.phone_number,
+      otp_code: otpCode,
+      endpoint: auditMeta?.endpoint || null,
+      currency: auditMeta?.currency || null,
+      detail: agent_amount > 0
+        ? `Credited ৳${agent_amount}${cli ? ` · ${cli}` : ''}`
+        : `OTP received (no commission)${cli ? ` · ${cli}` : ''}`,
+    });
+  } catch (_) { /* never break delivery */ }
 }
 
 module.exports = router;
