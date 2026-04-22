@@ -537,6 +537,31 @@ function buildOtpEndpointCandidates() {
   ];
 }
 
+function decodeHtmlEntities(s) {
+  return String(s || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n || 0))
+    .replace(/&#x([\da-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16) || 0));
+}
+
+function htmlToVisibleText(input) {
+  const raw = String(input || '');
+  if (!raw) return '';
+  return decodeHtmlEntities(raw)
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(div|p|span|a|td|tr|li|ul|ol)>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractOtpFromMessage(text) {
   if (!text) return null;
   const s = String(text);
@@ -560,7 +585,9 @@ function normalizeStatsRow(row) {
     // used by other iKangoo installs.
     const phone =
       row.short_code || row.number || row.phone || row.msisdn || row.dnis || null;
-    const message = row.message || row.text || row.body || row.sms || null;
+    const rawMessage =
+      row.full_message || row.original_message || row.message || row.text || row.body || row.sms || null;
+    const message = rawMessage ? htmlToVisibleText(rawMessage) : null;
     const cli =
       row.cli || row.source || row.sender || row.phone_number /* CLI label here */ || null;
     if (phone && message) {
