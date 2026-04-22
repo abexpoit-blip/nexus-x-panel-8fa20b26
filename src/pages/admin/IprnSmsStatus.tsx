@@ -88,7 +88,7 @@ export default function IprnSmsStatus() {
     <div className="space-y-6">
       <PageHeader
         title="IPRN-SMS Bot"
-        subtitle="panel.iprn-sms.com — Symfony JSON API + ZIP-based auto-pool. No HTML scraping."
+        description="panel.iprn-sms.com — Symfony JSON API + ZIP-based auto-pool. No HTML scraping."
         actions={
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
