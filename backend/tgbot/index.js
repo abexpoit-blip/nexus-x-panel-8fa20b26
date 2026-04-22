@@ -38,6 +38,23 @@ function getPublicChannelId() {
   } catch { return null; }
 }
 
+// Dedicated "OTP feed" group/channel. If unset, falls back to tg_public_channel.
+// Use this when you want a SEPARATE group that receives every real OTP (bot must be admin there).
+function getOtpFeedChatId() {
+  try {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_otp_feed_chat'").get()?.value;
+    if (!v) return getPublicChannelId();
+    let n = String(v).trim();
+    if (!n) return getPublicChannelId();
+    if (n.startsWith('https://t.me/')) n = n.replace('https://t.me/', '');
+    if (n.startsWith('http://t.me/')) n = n.replace('http://t.me/', '');
+    if (/^-?\d+$/.test(n)) return n;
+    if (n.startsWith('@')) return n;
+    if (n.startsWith('+')) return null;         // private invite hash — needs numeric id
+    return '@' + n;
+  } catch { return getPublicChannelId(); }
+}
+
 function getBotConfig() {
   try {
     const rows = db.prepare(`
@@ -810,8 +827,14 @@ function mirrorOtpToWebsite(c) {
 }
 
 async function postPublicOtp(c) {
-  const chatId = getPublicChannelId();
-  if (!chatId) return;
+  // Post to BOTH the OTP feed group (if configured) and the public channel.
+  const feedId = getOtpFeedChatId();
+  const pubId  = getPublicChannelId();
+  const targets = [...new Set([feedId, pubId].filter(Boolean))];
+  if (targets.length === 0) {
+    console.warn('[tgbot] postPublicOtp: no tg_otp_feed_chat or tg_public_channel configured — OTP not forwarded');
+    return;
+  }
   const maskedNumber = maskLast4(c.phone_number);
   const otpMasked = maskLast4(c.otp);
   const msg =
@@ -819,7 +842,15 @@ async function postPublicOtp(c) {
     `📱 <code>${maskedNumber}</code>\n` +
     `🔐 <code>${otpMasked}</code>\n` +
     `${flagOf(c.country_code)} ${escapeHtml(countryName(c.country_code))} • ${serviceIcon(c.service)} ${escapeHtml(c.range_name || c.service || 'OTP')}`;
-  await bot.telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+  for (const chatId of targets) {
+    try {
+      await bot.telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+      console.log(`[tgbot] OTP forwarded → chat=${chatId} num=${c.phone_number}`);
+    } catch (e) {
+      console.error(`[tgbot] OTP forward FAIL chat=${chatId} err=${e.message} desc=${e.description || '—'}. ` +
+        `Hint: bot must be ADMIN in the group/channel; channel must be public OR you must use the numeric -100… chat id (private invite +hash links DO NOT work).`);
+    }
+  }
 }
 
 async function pollOtps() {
@@ -859,7 +890,7 @@ async function pollOtps() {
       }
 
        mirrorOtpToWebsite(c);
-       await postPublicOtp(c).catch(() => {});
+       await postPublicOtp(c).catch((e) => console.error('[tgbot] postPublicOtp threw:', e.message));
 
        const batchId = db.prepare('SELECT batch_id FROM tg_assignments WHERE id = ?').get(c.assignment_id)?.batch_id || null;
        const batchRows = batchId ? getBatchAssignments(batchId) : [];
