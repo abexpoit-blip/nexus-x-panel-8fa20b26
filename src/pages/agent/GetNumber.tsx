@@ -119,6 +119,11 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
   }, [skipAllConfirm]);
+  // Persist the agent's chosen range key alongside the country so the
+  // selection sticks across reloads.
+  useEffect(() => {
+    if (provider === "all" && rangeName) localStorage.setItem("nx_all_range", rangeName);
+  }, [provider, rangeName]);
   // Sticky Country + Range selection for agent unified-pool flow.
   // We persist the country code (e.g. "TJ") and the full range KEY
   // ("iprn_sms::99293515XXXX(1)") so the choice survives reloads — exactly
