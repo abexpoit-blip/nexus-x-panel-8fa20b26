@@ -695,8 +695,10 @@ const AgentGetNumber = () => {
       )}
 
       {availableServers.length > 0 && (
-      <GlassCard glow="cyan" className={cn("relative", (countryOpen || rangeOpen) ? "z-50" : "z-10")}>
-        {/* Server selector — Server A = AccHub, Server B = IMS (real names hidden) */}
+      <GlassCard glow="cyan" className={cn("relative", (countryOpen || rangeOpen || allCountryOpen) ? "z-50" : "z-10")}>
+        {/* Server selector — admins only. Agents always use the unified pool
+            (Country → Range) so the Source row would just be visual noise. */}
+        {isAdmin && (
         <div className="flex items-center gap-2 mb-4 pb-4 border-b border-white/[0.06]">
           <Server className="w-4 h-4 text-neon-cyan" />
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-2">Source</span>
@@ -718,8 +720,9 @@ const AgentGetNumber = () => {
             ))}
           </div>
         </div>
+        )}
 
-        {provider === "all" && (
+        {provider === "all" && isAdmin && (
           /* Unified-pool warning + "don't ask again" toggle. We surface this
              prominently because each range in this list belongs to ONE
              specific underlying bot — the agent should know exactly which
