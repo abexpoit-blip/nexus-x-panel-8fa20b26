@@ -97,6 +97,23 @@ router.get('/all/ranges', authRequired, async (req, res) => {
   };
   try {
     const out = [];
+    // "Hot" detection: ranges with the most agent allocations in the past 1h.
+    // We expose a simple boolean per (provider,range) so the UI can show 🔥
+    // — keeps the cost on the agent side cheap (no second round-trip).
+    let hotSet = new Set();
+    try {
+      const sinceTs = Math.floor(Date.now() / 1000) - 3600;
+      const hotRows = db.prepare(
+        "SELECT provider, COALESCE(operator,'Unknown') AS op, COUNT(*) AS c \
+         FROM allocations \
+         WHERE allocated_at >= ? AND status != 'pool' \
+         GROUP BY provider, op \
+         HAVING c >= 3 \
+         ORDER BY c DESC \
+         LIMIT 50"
+      ).all(sinceTs);
+      hotSet = new Set(hotRows.map((r) => `${r.provider}::${r.op}`));
+    } catch (_) {}
     for (const pid of Object.keys(POOL_LABELS)) {
       if (!isProviderEnabled(pid)) continue;
       let p;
@@ -143,6 +160,7 @@ router.get('/all/ranges', authRequired, async (req, res) => {
           country_code: country,
           country_name: countryName,
           count: r.count,
+          hot: hotSet.has(`${pid}::${r.name}`),
         });
       }
     }
