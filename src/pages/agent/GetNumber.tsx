@@ -668,7 +668,11 @@ const AgentGetNumber = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-display font-bold text-foreground">Get Number</h1>
-        <p className="text-sm text-muted-foreground mt-1">Search a country, pick an operator, and request a fresh number</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          {isAdmin
+            ? "Search a country, pick an operator, and request a fresh number"
+            : "Pick a country and range — we'll grab the next available number from the pool"}
+        </p>
       </div>
 
       {maintenanceMode && (
