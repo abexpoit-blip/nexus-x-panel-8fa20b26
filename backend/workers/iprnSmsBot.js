@@ -23,6 +23,7 @@
 const axios = require('axios');
 const AdmZip = require('adm-zip');
 const db = require('../lib/db');
+const { markOtpReceived } = require('../routes/numbers');
 
 const QUIET = process.env.NODE_ENV === 'production';
 const dlog = (...a) => { if (!QUIET) console.log(...a); };
@@ -59,6 +60,13 @@ function resolveCreds() {
 
 let { ENABLED, BASE_URL, USERNAME, PASSWORD, TYPE } = resolveCreds();
 const NUMBERS_INTERVAL = Math.max(60, +(process.env.IPRN_SMS_NUMBERS_INTERVAL || 600));
+// OTP scrape interval — far shorter than pool sync since this is the
+// agent-facing latency. Min 3s to avoid hammering panel.iprn-sms.com.
+const OTP_INTERVAL = Math.max(3, +(process.env.IPRN_SMS_OTP_INTERVAL || 5));
+// The stats endpoint is currency-filtered. Per the user's manual check,
+// OTPs are only visible when currency=USD is selected. Configurable in case
+// the account ever changes payout currency.
+const OTP_CURRENCY = (process.env.IPRN_SMS_OTP_CURRENCY || 'USD').toUpperCase();
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -67,6 +75,7 @@ const cookies = new Map();
 let loggedIn = false;
 let busy = false;
 let numbersTimer = null;
+let otpTimer = null;
 let _stopped = false;
 
 function cookieHeader() {
@@ -166,6 +175,10 @@ const status = {
   loggedIn: false,
   lastLoginAt: null,
   lastNumbersScrapeAt: null,
+  lastOtpScrapeAt: null,
+  lastOtpScrapeOk: false,
+  otpsDeliveredTotal: 0,
+  otpEndpoint: null,        // first endpoint that returned valid JSON; cached after discovery
   lastError: null,
   lastErrorAt: null,
   numbersScrapedTotal: 0,
@@ -174,6 +187,8 @@ const status = {
   consecFail: 0,
   baseUrl: '',
   numbersIntervalSec: 0,
+  otpIntervalSec: 0,
+  otpCurrency: 'USD',
   smsType: 'sms',
 };
 const events = [];
