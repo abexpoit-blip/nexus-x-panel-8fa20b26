@@ -334,6 +334,8 @@ export const api = {
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
   msiAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/msi/pool", { method: "POST", body: JSON.stringify(body) }),
+  seven1telAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
+    request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/seven1tel/pool", { method: "POST", body: JSON.stringify(body) }),
   myNumbers: () => request<{ numbers: Allocation[]; recent_window_hours?: number; otp_expiry_sec?: number; server_now?: number }>("/numbers/my"),
   numberHistory: (params: { page?: number; page_size?: number; q?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams();
@@ -629,6 +631,46 @@ export const api = {
     }) => request<{ ok: boolean }>("/admin/msi-range-meta", { method: "PUT", body: JSON.stringify(body) }),
     msiRangeMetaDelete: (prefix: string) =>
       request<{ ok: boolean }>(`/admin/msi-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
+
+    // ---- Seven1Tel Bot (same /ints panel as MSI) ----
+    seven1telCredentials: () => request<{
+      enabled: boolean; base_url: string; username: string;
+      password_masked: string; has_password: boolean;
+      source: { username: string; password: string };
+    }>("/admin/seven1tel-credentials"),
+    seven1telCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/seven1tel-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    seven1telOtpInterval: () => request<{ interval_sec: number; source: string; options: number[]; min: number; max: number }>("/admin/seven1tel-otp-interval"),
+    seven1telOtpIntervalSave: (interval_sec: number) =>
+      request<{ ok: boolean; interval_sec: number }>("/admin/seven1tel-otp-interval", { method: "PUT", body: JSON.stringify({ interval_sec }) }),
+    seven1telCookiesStatus: () =>
+      request<{ has_cookies: boolean; count: number; saved_at: number | null }>("/admin/seven1tel-cookies"),
+    seven1telCookiesSave: (cookies: string) =>
+      request<{ ok: boolean }>("/admin/seven1tel-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
+    seven1telCookiesClear: () =>
+      request<{ ok: boolean }>("/admin/seven1tel-cookies", { method: "DELETE" }),
+    seven1telStatus: () => request<{ status: any }>("/admin/seven1tel-status"),
+    seven1telRestart: () => request<{ ok: boolean }>("/admin/seven1tel-restart", { method: "POST" }),
+    seven1telStart: () => request<{ ok: boolean }>("/admin/seven1tel-start", { method: "POST" }),
+    seven1telStop: () => request<{ ok: boolean }>("/admin/seven1tel-stop", { method: "POST" }),
+    seven1telScrapeNow: () => request<{ ok: boolean; added?: number; otps?: number; error?: string }>("/admin/seven1tel-scrape-now", { method: "POST" }),
+    seven1telSyncLive: () => request<{ ok: boolean; added?: number; removed?: number; kept?: number; scraped?: number; ranges?: string[]; error?: string }>("/admin/seven1tel-sync-live", { method: "POST" }),
+    seven1telPoolBreakdown: () => request<{
+      ranges: {
+        name: string; count: number; last_added: number; first_added?: number;
+        custom_name: string | null; tag_color: string | null; priority: number | null;
+        request_override: number | null; notes: string | null;
+        disabled: number | null; service_tag: string | null;
+      }[];
+      totalActive: number; totalUsed?: number;
+    }>("/admin/seven1tel-pool-breakdown"),
+    seven1telRangeMetaSave: (body: {
+      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
+      priority?: number | null; request_override?: number | null; notes?: string | null;
+      disabled?: boolean; service_tag?: string | null;
+    }) => request<{ ok: boolean }>("/admin/seven1tel-range-meta", { method: "PUT", body: JSON.stringify(body) }),
+    seven1telRangeMetaDelete: (prefix: string) =>
+      request<{ ok: boolean }>(`/admin/seven1tel-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
 
     // ---- IPRN range meta (shared rangeMetaRoutes('iprn')) ----
     iprnRangeMetaSave: (body: {

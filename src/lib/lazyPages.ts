@@ -37,6 +37,7 @@ export const Pages = {
   "/admin/numpanel-status":   make(() => import("@/pages/admin/NumPanelStatus")),
   "/admin/iprn-status":       make(() => import("@/pages/admin/IprnStatus")),
   "/admin/iprn-sms-status":   make(() => import("@/pages/admin/IprnSmsStatus")),
+  "/admin/seven1tel-status":  make(() => import("@/pages/admin/Seven1telStatus")),
   "/admin/provider-settings": make(() => import("@/pages/admin/ProviderSettings")),
   "/admin/tg-bot":            make(() => import("@/pages/admin/TgBot")),
   "/admin/notifications":     make(() => import("@/pages/admin/Notifications")),
