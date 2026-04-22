@@ -34,11 +34,11 @@ router.post('/login', (req, res) => {
     return res.status(403).json({ error: 'Your account is pending admin approval. Please wait for approval before logging in.' });
   }
   if (user.status !== 'active') return res.status(403).json({ error: 'Account suspended' });
-  // /login is the agent entry point. Admins must use /admin-login so that
-  // the two surfaces stay clearly separated and admin sessions are never
-  // created from the agent form (defense in depth — admin-login does its
-  // own role check).
-  if (user.role === 'admin') {
+  // Agent login form sends X-Login-Surface: agent. Admins must use the
+  // dedicated admin portal so that the agent form never establishes an
+  // admin session (defense in depth — the frontend also blocks this).
+  const surface = String(req.headers['x-login-surface'] || '').toLowerCase();
+  if (surface === 'agent' && user.role === 'admin') {
     log({ userId: user.id, action: 'login_blocked_admin_on_agent_form', ip: req.ip });
     return res.status(403).json({ error: 'Admin accounts must sign in from the admin login page.' });
   }
