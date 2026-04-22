@@ -308,6 +308,14 @@ const AgentGetNumber = () => {
         // Also feed the shared `ranges` state (using key as name) so the
         // existing dropdown UI can render without branching everywhere.
         setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
+        // Restore last sticky selection if it's still valid.
+        const savedRange = localStorage.getItem("nx_all_range") || "";
+        if (savedRange && ranges.some((r) => r.key === savedRange)) {
+          setRangeName(savedRange);
+          // Make sure country matches the saved range so the cascade is consistent.
+          const m = ranges.find((r) => r.key === savedRange);
+          if (m?.country_code) setAllCountry(m.country_code);
+        }
       }).catch(() => { setAllRanges([]); setRanges([]); });
       setCountries([]);
     } else {
