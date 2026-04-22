@@ -165,20 +165,42 @@ router.post('/get', authRequired, async (req, res) => {
     }
 
     let provider;
-    try { provider = providers.get(providerId); }
+    let effectiveProviderId = providerId;
+    let effectiveRange = range;
+    // Virtual "all" provider — decode `range` ("<providerId>::<rangeName>")
+    // and dispatch to the underlying pool provider. This lets the agent pick
+    // from any bot's pool without us needing per-provider UI logic.
+    if (providerId === 'all') {
+      const raw = (range || '').toString();
+      const [pid, ...rest] = raw.split('::');
+      const rname = rest.join('::');
+      if (!pid || !rname) {
+        return res.status(400).json({ error: 'Invalid range key for All Servers — expected "<provider>::<range>"' });
+      }
+      if (!isProviderEnabled(pid)) {
+        return res.status(403).json({
+          code: 'PROVIDER_DISABLED', provider: pid,
+          error: `Underlying provider ${pid} is disabled.`,
+          allocated: [], errors: [],
+        });
+      }
+      effectiveProviderId = pid;
+      effectiveRange = rname;
+    }
+    try { provider = providers.get(effectiveProviderId); }
     catch (e) { return res.status(400).json({ error: e.message }); }
 
     // Soft-OFF guard — admin disabled this provider. Defense-in-depth: even
     // if the agent UI somehow shows a stale option, we refuse here so a
     // disabled bot can never allocate numbers (and we don't waste a poll).
-    if (!isProviderEnabled(providerId)) {
+    if (!isProviderEnabled(effectiveProviderId)) {
       return res.status(403).json({
         // Machine-readable code so the UI can switch on it directly
         // instead of fragile regex on the human-readable `error` string.
         code: 'PROVIDER_DISABLED',
-        provider: providerId,
-        provider_name: provider.name || providerId,
-        error: `${provider.name || providerId} is currently disabled by admin. Please pick another source.`,
+        provider: effectiveProviderId,
+        provider_name: provider.name || effectiveProviderId,
+        error: `${provider.name || effectiveProviderId} is currently disabled by admin. Please pick another source.`,
         allocated: [], errors: [],
       });
     }
@@ -190,7 +212,7 @@ router.post('/get', authRequired, async (req, res) => {
     const CONCURRENCY = 10;
     const fetchOne = () => provider.getNumber({
       countryId: country_id, operatorId: operator_id,
-      countryCode: country_code, operator, range,
+      countryCode: country_code, operator, range: effectiveRange,
     });
     const fetched = []; // [{ ok: true, r } | { ok: false, msg }]
     let cursor = 0;
