@@ -351,7 +351,7 @@ const AgentGetNumber = () => {
       });
       return;
     }
-    if (provider === "ims" || provider === "msi") {
+    if (provider === "ims" || provider === "msi" || provider === "all") {
       if (!rangeName) { toast({ title: "Select a range", variant: "destructive" }); return; }
     } else if (!countryId || !operatorId) {
       toast({ title: "Select country & operator", variant: "destructive" });
@@ -361,7 +361,7 @@ const AgentGetNumber = () => {
     try {
       const { allocated, errors } = await api.getNumber({
         provider,
-        ...(provider === "ims" || provider === "msi"
+        ...(provider === "ims" || provider === "msi" || provider === "all"
           ? { range: rangeName }
           : { country_id: Number(countryId), operator_id: Number(operatorId) }),
         count: quantity,
@@ -384,6 +384,10 @@ const AgentGetNumber = () => {
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
       else if (provider === "msi") api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
+      else if (provider === "all") api.allRanges().then(({ ranges }) => {
+        setAllRanges(ranges);
+        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
+      }).catch(() => {});
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       // Dedicated state for the soft-OFF case. Backend returns
