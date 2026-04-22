@@ -130,6 +130,9 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
   }, [skipAllConfirm]);
+  // Styled confirmation dialog for the unified pool — replaces the native
+  // browser confirm() that looked alien and got cut off on small viewports.
+  const [confirmOpen, setConfirmOpen] = useState(false);
   // Persist the agent's chosen range key alongside the country so the
   // selection sticks across reloads.
   useEffect(() => {
