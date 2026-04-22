@@ -61,6 +61,7 @@ interface AllRange {
   country_code: string | null;
   country_name?: string | null;
   count: number;
+  hot?: boolean;
 }
 
 const AgentGetNumber = () => {
