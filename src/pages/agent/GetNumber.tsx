@@ -350,6 +350,27 @@ const AgentGetNumber = () => {
       toast({ title: "Maintenance mode", description: maintenanceMessage, variant: "destructive" });
       return;
     }
+    // Confirmation prompt for the unified "All Servers" pool — agents
+    // sometimes pick it by accident thinking it's a single bot. We make it
+    // explicit that the chosen range belongs to a SPECIFIC underlying
+    // provider and ask them to confirm before billing kicks in. Skipped
+    // when the agent ticks "don't ask again" (persisted in localStorage).
+    if (provider === "all" && rangeName) {
+      const skip = localStorage.getItem("nx_skip_all_confirm") === "1";
+      if (!skip) {
+        const meta = allRanges.find((x) => x.key === rangeName);
+        const target = meta
+          ? `${meta.name} — ${meta.count} available`
+          : rangeName;
+        const msg =
+          `You are about to allocate ${quantity} number${quantity > 1 ? "s" : ""} ` +
+          `from:\n\n${target}\n\n` +
+          `This range belongs to ${meta?.provider_label || "an underlying server"}. ` +
+          `Continue?\n\n(Tip: tick OK to proceed. Cancel to pick a different range.)`;
+        const ok = window.confirm(msg);
+        if (!ok) return;
+      }
+    }
     // Re-check enabled providers RIGHT before allocating so the agent
     // never sends a request to a provider that just got disabled.
     const fresh = await refreshProviders();
