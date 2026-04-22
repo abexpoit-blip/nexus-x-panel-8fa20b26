@@ -1811,6 +1811,20 @@ router.delete('/iprn-sms-cookies', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Test current credentials by doing a full login round-trip without restarting
+// the bot. Returns { ok, latency_ms, error? }.
+router.post('/iprn-sms-test-login', async (req, res) => {
+  try {
+    const bot = require('../workers/iprnSmsBot');
+    if (typeof bot.testLogin !== 'function') {
+      return res.status(501).json({ ok: false, error: 'Bot does not support test-login' });
+    }
+    const result = await bot.testLogin();
+    logFromReq(req, 'iprn_sms_test_login', { meta: { ok: result.ok, latency_ms: result.latency_ms } });
+    res.json(result);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 
 module.exports = router;
 
