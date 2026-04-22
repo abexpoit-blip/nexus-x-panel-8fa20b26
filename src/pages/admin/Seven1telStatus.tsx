@@ -596,21 +596,16 @@ const AdminSeven1telStatus = () => {
   };
 
   const handleSyncLive = async () => {
-    if (!confirm(
-      "Live Sync will:\n" +
-      "  • ADD any new Seven1Tel numbers\n" +
-      "  • REMOVE pool numbers Seven1Tel no longer has\n" +
-      "  • Active assigned numbers are NEVER touched\n\nContinue?"
-    )) return;
+    // Pool-only resync — safe, no OTP delivery, no destructive surprises beyond keeping pool in sync with live panel.
     setSyncing(true);
     try {
       const r = await api.admin.seven1telSyncLive();
       if (r.ok) {
-        toast.success(`Live sync done: +${r.added ?? 0} added · -${r.removed ?? 0} removed · ${r.kept ?? 0} kept (${r.scraped ?? 0} live)`, { duration: 6000 });
-      } else { toast.error(r.error || "Live sync failed"); }
+        toast.success(`Pool refill done: +${r.added ?? 0} added · -${r.removed ?? 0} removed · ${r.kept ?? 0} kept (${r.scraped ?? 0} live)`, { duration: 6000 });
+      } else { toast.error(r.error || "Pool refill failed"); }
       refetch(); refetchPool();
     } catch (e) {
-      toast.error("Live sync failed: " + (e as Error).message);
+      toast.error("Pool refill failed: " + (e as Error).message);
     } finally { setSyncing(false); }
   };
 
