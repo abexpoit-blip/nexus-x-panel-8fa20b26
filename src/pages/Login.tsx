@@ -23,7 +23,7 @@ const Login = () => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const loggedInUser = await login(username, password);
+    const loggedInUser = await login(username, password, "agent");
     setLoading(false);
     if (!loggedInUser) {
       setError("Invalid username or password");
