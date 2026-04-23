@@ -4,9 +4,34 @@ import { lazy } from "react";
 // React.lazy and prefetch reference the same import factory.
 type Loader = () => Promise<unknown>;
 
+// Wrap a dynamic import so a transient chunk fetch failure (flaky network,
+// just-deployed asset still propagating) is retried twice with backoff
+// before bubbling up to the RouteBoundary. This eliminates most of the
+// "click menu → black screen, need reload" cases.
+const withRetry = <T>(loader: () => Promise<T>, retries = 2, delay = 400): (() => Promise<T>) => {
+  return () =>
+    new Promise<T>((resolve, reject) => {
+      const attempt = (left: number, wait: number) => {
+        loader()
+          .then(resolve)
+          .catch((err) => {
+            const msg = String(err?.message || err);
+            const isChunk = /Loading chunk|Loading CSS chunk|Failed to fetch dynamically imported module|Importing a module script failed/i.test(msg);
+            if (left > 0 && isChunk) {
+              setTimeout(() => attempt(left - 1, wait * 2), wait);
+            } else {
+              reject(err);
+            }
+          });
+      };
+      attempt(retries, delay);
+    });
+};
+
 const make = <T extends Loader>(loader: T) => {
-  const L = lazy(loader as never);
-  return { L, prefetch: loader } as { L: ReturnType<typeof lazy>; prefetch: Loader };
+  const wrapped = withRetry(loader as () => Promise<unknown>);
+  const L = lazy(wrapped as never);
+  return { L, prefetch: wrapped } as { L: ReturnType<typeof lazy>; prefetch: Loader };
 };
 
 export const Pages = {

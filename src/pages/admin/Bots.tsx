@@ -5,8 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/premium/PageHeader";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import {
   Bot, ExternalLink, RefreshCw, CircleCheck, CircleAlert, PowerOff, CircleDashed,
+  Play, Square, RotateCw,
 } from "lucide-react";
 
 type BotEntry = {
@@ -15,16 +17,19 @@ type BotEntry = {
   panel: string;
   route: string;
   fetcher: () => Promise<{ status: any }>;
+  start: () => Promise<{ ok: boolean }>;
+  stop: () => Promise<{ ok: boolean }>;
+  restart: () => Promise<{ ok: boolean }>;
 };
 
 const BOTS: BotEntry[] = [
-  { key: "ims",         label: "IMS",          panel: "imssms.org",            route: "/admin/ims-status",        fetcher: () => api.admin.imsStatus() },
-  { key: "msi",         label: "MSI",          panel: "145.239.130.45/ints",   route: "/admin/msi-status",        fetcher: () => api.admin.msiStatus() },
-  { key: "numpanel",    label: "NumPanel",     panel: "51.89.99.105",          route: "/admin/numpanel-status",   fetcher: () => api.admin.numpanelStatus() },
-  { key: "iprn",        label: "IPRN",         panel: "iprndata.com",          route: "/admin/iprn-status",       fetcher: () => api.iprn.status() },
-  { key: "iprn_sms",    label: "IPRN-SMS",     panel: "panel.iprn-sms.com",    route: "/admin/iprn-sms-status",   fetcher: () => api.iprnSms.status() },
-  { key: "iprn_sms_v2", label: "IPRN-SMS V2",  panel: "panel.iprn-sms.com",    route: "/admin/iprn-sms-v2-status", fetcher: () => api.iprnSmsV2.status() },
-  { key: "seven1tel",   label: "Seven1Tel",    panel: "94.23.120.156/ints",    route: "/admin/seven1tel-status",  fetcher: () => api.admin.seven1telStatus() },
+  { key: "ims",         label: "IMS",          panel: "imssms.org",            route: "/admin/ims-status",         fetcher: () => api.admin.imsStatus(),       start: () => api.admin.imsStart(),       stop: () => api.admin.imsStop(),       restart: () => api.admin.imsRestart() },
+  { key: "msi",         label: "MSI",          panel: "145.239.130.45/ints",   route: "/admin/msi-status",         fetcher: () => api.admin.msiStatus(),       start: () => api.admin.msiStart(),       stop: () => api.admin.msiStop(),       restart: () => api.admin.msiRestart() },
+  { key: "numpanel",    label: "NumPanel",     panel: "51.89.99.105",          route: "/admin/numpanel-status",    fetcher: () => api.admin.numpanelStatus(),  start: () => api.admin.numpanelStart(),  stop: () => api.admin.numpanelStop(),  restart: () => api.admin.numpanelRestart() },
+  { key: "iprn",        label: "IPRN",         panel: "iprndata.com",          route: "/admin/iprn-status",        fetcher: () => api.iprn.status(),           start: () => api.iprn.start(),           stop: () => api.iprn.stop(),           restart: () => api.iprn.restart() },
+  { key: "iprn_sms",    label: "IPRN-SMS",     panel: "panel.iprn-sms.com",    route: "/admin/iprn-sms-status",    fetcher: () => api.iprnSms.status(),        start: () => api.iprnSms.start(),        stop: () => api.iprnSms.stop(),        restart: () => api.iprnSms.restart() },
+  { key: "iprn_sms_v2", label: "IPRN-SMS V2",  panel: "panel.iprn-sms.com",    route: "/admin/iprn-sms-v2-status", fetcher: () => api.iprnSmsV2.status(),      start: () => api.iprnSmsV2.start(),      stop: () => api.iprnSmsV2.stop(),      restart: () => api.iprnSmsV2.restart() },
+  { key: "seven1tel",   label: "Seven1Tel",    panel: "94.23.120.156/ints",    route: "/admin/seven1tel-status",   fetcher: () => api.admin.seven1telStatus(), start: () => api.admin.seven1telStart(), stop: () => api.admin.seven1telStop(), restart: () => api.admin.seven1telRestart() },
 ];
 
 function fmtAgo(ts: number | null | undefined): string {
