@@ -1035,6 +1035,10 @@ async function postPublicOtp(c) {
   // Inline keyboard: single "‼️ Bot" button — no Support button.
   const cc = (c.country_code || '').toUpperCase();
   const flag = flagOf(c.country_code) || '🏳️';
+  const flagCustom = flagCustomEmoji(c.country_code);
+  const flagBrand = flagCustom
+    ? `<tg-emoji emoji-id="${flagCustom.id}">${flagCustom.fallback}</tg-emoji>`
+    : flag;
   const svcRaw = c.service || c.range_name || 'SMS';
   const svcLabel = String(svcRaw).replace(/[_\-]+/g, ' ').trim();
   const svcTag = serviceIcon(svcRaw);
@@ -1050,14 +1054,19 @@ async function postPublicOtp(c) {
 
   const msg =
     `<b>Nexus X Number Panel</b>\n` +
-    `${flag} <b>${escapeHtml(cc || '??')}</b> • ${svcBrand} ${svcTag} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>\n` +
-    `<tg-spoiler>${escapeHtml(otpFull)}</tg-spoiler>`;
+    `${flagBrand} <b>${escapeHtml(cc || '??')}</b> • ${svcBrand} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>`;
 
-  // Inline keyboard — Bot link only (Support removed per spec)
+  // Inline keyboard — row 1: copy-OTP button (tap to copy code to clipboard).
+  // row 2: Bot link only (Support removed per spec).
   const botUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
-  const reply_markup = botUrl
-    ? { inline_keyboard: [[{ text: '‼️ Bot', url: botUrl }]] }
-    : undefined;
+  const rows = [];
+  if (otpFull) {
+    // Telegram "copy_text" button — when user taps, the OTP is copied to clipboard.
+    // We display dots so the code stays hidden until copy.
+    rows.push([{ text: ' •••••••• ', copy_text: { text: otpFull } }]);
+  }
+  if (botUrl) rows.push([{ text: '‼️ Bot', url: botUrl }]);
+  const reply_markup = rows.length ? { inline_keyboard: rows } : undefined;
 
   for (const chatId of targets) {
     try {
