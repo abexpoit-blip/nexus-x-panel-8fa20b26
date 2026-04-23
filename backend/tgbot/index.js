@@ -298,23 +298,26 @@ function getDisabledRangeKeys() {
 function listCountries() {
   const rows = db.prepare(`
     SELECT a.country_code AS raw_cc, COALESCE(a.operator,'Unknown') AS range_name, COUNT(*) AS cnt
-         , a.provider AS provider
+         , a.provider AS provider, r.service AS service
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
     WHERE a.status = 'pool' AND r.tg_enabled = 1
-    GROUP BY a.provider, a.country_code, range_name
+    GROUP BY a.provider, a.country_code, range_name, r.service
   `).all();
   const disabled = getDisabledRangeKeys();
   const agg = new Map();
   for (const r of rows) {
     if (disabled.has(`${r.provider}::${r.range_name}`)) continue;
     const cc = bestCountryCode(r.raw_cc, r.range_name) || 'XX';
-    agg.set(cc, (agg.get(cc) || 0) + r.cnt);
+    const cur = agg.get(cc) || { cnt: 0, services: new Set() };
+    cur.cnt += r.cnt;
+    if (r.service) cur.services.add(String(r.service).toLowerCase());
+    agg.set(cc, cur);
   }
   return Array.from(agg.entries())
-    .map(([code, cnt]) => ({ code, cnt }))
+    .map(([code, v]) => ({ code, cnt: v.cnt, services: Array.from(v.services) }))
     .filter(r => r.cnt > 0)
     .sort((a, b) => b.cnt - a.cnt || a.code.localeCompare(b.code));
 }
@@ -547,11 +550,16 @@ async function showCountries(ctx) {
   if (list.length === 0) {
     return ctx.replyWithHTML('😕 <b>No numbers available right now.</b>\nPlease check back in a few minutes.');
   }
-  const buttons = list.map(c => [
-    Markup.button.callback(`${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}`, `country:${c.code}`)
-  ]);
+  const buttons = list.map(c => {
+    const svcIcons = (c.services || []).slice(0, 4).map(s => serviceIcon(s)).join('');
+    const tail = svcIcons ? ` ${svcIcons}` : '';
+    return [Markup.button.callback(
+      `${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}${tail}`,
+      `country:${c.code}`
+    )];
+  });
   await ctx.replyWithHTML(
-    `<b>🌍 Available Countries</b>\nPick a country to see ranges:`,
+    `<b>🌍 Available Countries</b>\nIcons show available services: 🟦 Facebook · 🟢 WhatsApp · ✈️ Telegram · 🎵 TikTok · 📷 Instagram · 🔍 Google · 📡 Other`,
     Markup.inlineKeyboard(buttons)
   );
 }
