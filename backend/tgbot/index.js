@@ -669,11 +669,13 @@ async function claimAndDeliver(ctx, provider, rangeName, cc) {
   if (getDisabledRangeKeys().has(`${provider}::${rangeName}`)) {
     return ctx.reply('🚫 This range was just disabled by admin. Please pick another.');
   }
-  const rate = setting.tg_rate_bdt || 0;
+  const billing = isBillingEnabled();
+  // When billing is OFF globally, force rate=0 so charges + balance check are skipped.
+  const rate = billing ? (setting.tg_rate_bdt || 0) : 0;
 
   // We reserve = 1 OTP success worth × batch (refunded if no OTP).
   // For simplicity charge only on OTP arrival, but block if balance < rate.
-  if (rate > 0 && u.balance_bdt < rate) {
+  if (billing && rate > 0 && u.balance_bdt < rate) {
     return ctx.replyWithHTML(
       `💸 <b>Insufficient balance.</b>\nYour balance: ${fmtBdt(u.balance_bdt)}\n` +
       `Each OTP costs: ${fmtBdt(rate)}\nContact admin to top up.`
