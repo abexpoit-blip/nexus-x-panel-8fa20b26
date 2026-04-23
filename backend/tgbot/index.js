@@ -954,7 +954,7 @@ async function pollOtps() {
       if (updated.changes !== 1) continue;
 
       // bill
-      if (c.rate_bdt > 0) {
+      if (isBillingEnabled() && c.rate_bdt > 0) {
         db.transaction(() => {
           db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
             .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
