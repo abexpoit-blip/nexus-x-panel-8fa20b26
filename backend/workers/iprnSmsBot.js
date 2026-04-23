@@ -472,10 +472,14 @@ async function scrapeNumbers() {
     return 0;
   }
 
-  // Skip phones already in pool/claiming/active
+  // Skip phones already known to us — IMPORTANT: panel.iprn-sms.com does NOT
+  // remove sold numbers from its ZIP feed, so without this check we'd
+  // re-import every number we've ever used on every pool sync. We must
+  // dedup against EVERY status (pool/claiming/active/received/released/
+  // expired/...) so a used number can never be sold to another agent.
   const existing = db.prepare(`
-    SELECT phone_number FROM allocations
-    WHERE provider='iprn_sms' AND status IN ('pool','claiming','active')
+    SELECT DISTINCT phone_number FROM allocations
+    WHERE provider='iprn_sms'
   `).all().reduce((s, r) => s.add(r.phone_number), new Set());
 
   const sysUser = ensurePoolUser();
@@ -694,13 +698,21 @@ async function fetchAllStatsRows(url, firstPage) {
 
 function findActiveAllocationByScrapedPhone(scrapedPhone) {
   let best = null;
+  // Match the most recent allocation for this phone that:
+  //  - is still active (no OTP yet), OR
+  //  - was released/expired in the last 30 minutes without ever getting an OTP
+  // This covers the common case where the SMS arrives a few seconds AFTER
+  // the agent's number auto-released — we still credit the agent because
+  // they DID work for it. Older allocations are ignored to avoid mis-credit.
+  const cutoff = Math.floor(Date.now() / 1000) - 30 * 60;
   const sel = db.prepare(`
     SELECT * FROM allocations
-    WHERE provider='iprn_sms' AND phone_number=? AND status='active' AND otp IS NULL
+    WHERE provider='iprn_sms' AND phone_number=? AND otp IS NULL
+      AND (status='active' OR (status IN ('released','expired') AND allocated_at >= ?))
     ORDER BY allocated_at DESC LIMIT 1
   `);
   for (const candidate of phoneVariants(scrapedPhone)) {
-    const row = sel.get(candidate);
+    const row = sel.get(candidate, cutoff);
     if (!row) continue;
     if (!best || (row.allocated_at || 0) > (best.allocated_at || 0)) best = row;
   }
