@@ -66,8 +66,8 @@ function getBotConfig() {
       publicChannel: map.tg_public_channel || '@nexusxotpgroup',
       requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpgroup',
       requiredGroupChat: map.tg_required_group_chat || '@nexusxotpgroup',
-      otpGroup: map.tg_required_otp_group || 'https://t.me/+6RUOKrkz6YU1Yjk1',
-      otpGroupChat: map.tg_required_otp_group_chat || '',
+      otpGroup: map.tg_required_otp_group || 'https://t.me/nexusxotpfeed',
+      otpGroupChat: map.tg_required_otp_group_chat || '@nexusxotpfeed',
       terms: map.tg_terms_text || 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   } catch {
@@ -75,8 +75,8 @@ function getBotConfig() {
       publicChannel: '@nexusxotpgroup',
       requiredGroup: 'https://t.me/nexusxotpgroup',
       requiredGroupChat: '@nexusxotpgroup',
-      otpGroup: 'https://t.me/+6RUOKrkz6YU1Yjk1',
-      otpGroupChat: '',
+      otpGroup: 'https://t.me/nexusxotpfeed',
+      otpGroupChat: '@nexusxotpfeed',
       terms: 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   }
@@ -92,6 +92,9 @@ function seedDefaults() {
     stmt.run('tg_required_group_chat', '@nexusxotpgroup');
     // Default dedicated OTP feed channel (admin can override via Settings)
     stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
+    // Force-join OTP group (now points to the new feed channel)
+    stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
+    stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
   } catch (e) { console.warn('[seedDefaults]', e.message); }
 }
 seedDefaults();
