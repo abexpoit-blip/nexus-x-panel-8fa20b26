@@ -19,6 +19,11 @@ const EXPIRY_MIN        = Math.round(EXPIRY_SEC / 60);
 const SUPPORT_URL       = process.env.TG_SUPPORT_URL || 'https://t.me/';
 const SITE_URL          = process.env.TG_SITE_URL || 'https://nexus-x.site';
 
+// Cached bot username — populated at launch via getMe(); used to build the
+// single "Bot" inline button on every public OTP post so users in the channel
+// can jump straight to the bot. No support button — bot link only.
+let BOT_USERNAME = process.env.TG_BOT_USERNAME || '';
+
 // ---------- Public OTP history channel (admin configurable) ----------
 // Admin sets setting key `tg_public_channel` to a channel/group chat id like -1001234567890.
 // Every received OTP is posted there with number & OTP last-4 masked.
@@ -966,18 +971,37 @@ async function postPublicOtp(c) {
     console.warn('[tgbot] postPublicOtp: no tg_otp_feed_chat or tg_public_channel configured — OTP not forwarded');
     return;
   }
+  // ── Screenshot-style format ─────────────────────────────────────────
+  // Header (BN): "কি এটা কি তোমার"
+  // Line 1: 🇨🇨 CC • [SVC] <masked-number> • <Service>
+  // Line 2: full OTP wrapped in spoiler (<tg-spoiler>) so users tap to reveal
+  // Inline keyboard: single "‼️ Bot" button — no Support button.
+  const cc = (c.country_code || '').toUpperCase();
+  const flag = flagOf(c.country_code) || '🏳️';
+  const svcRaw = c.service || c.range_name || 'SMS';
+  const svcLabel = String(svcRaw).replace(/[_\-]+/g, ' ').trim();
+  const svcTag = serviceIcon(svcRaw);
   const maskedNumber = maskLast4(c.phone_number);
-  const otpMasked = maskLast4(c.otp);
-  const svc = c.service ? `${serviceIcon(c.service)} <b>${escapeHtml(c.service.toUpperCase())}</b>` : `${serviceIcon(null)} SMS`;
+  const otpFull = String(c.otp || '').trim();
+
   const msg =
-    `🔥 <b>New OTP Received</b>\n` +
-    `${svc}\n` +
-    `📱 <code>${maskedNumber}</code>\n` +
-    `🔐 <code>${otpMasked}</code>\n` +
-    `${flagOf(c.country_code)} ${escapeHtml(countryName(c.country_code))} • ${serviceIcon(c.service)} ${escapeHtml(c.range_name || c.service || 'OTP')}`;
+    `<b>কি এটা কি তোমার</b>\n` +
+    `${flag} <b>${escapeHtml(cc || '??')}</b> • ${svcTag} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>\n` +
+    `<tg-spoiler>${escapeHtml(otpFull)}</tg-spoiler>`;
+
+  // Inline keyboard — Bot link only (Support removed per spec)
+  const botUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
+  const reply_markup = botUrl
+    ? { inline_keyboard: [[{ text: '‼️ Bot', url: botUrl }]] }
+    : undefined;
+
   for (const chatId of targets) {
     try {
-      await bot.telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+      await bot.telegram.sendMessage(chatId, msg, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        ...(reply_markup ? { reply_markup } : {}),
+      });
       console.log(`[tgbot] OTP forwarded → chat=${chatId} num=${c.phone_number}`);
     } catch (e) {
       console.error(`[tgbot] OTP forward FAIL chat=${chatId} err=${e.message} desc=${e.description || '—'}. ` +
@@ -1380,6 +1404,7 @@ async function feedForwardAllOtps() {
     // Make sure no webhook is set (we use polling)
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
     const me = await bot.telegram.getMe();
+    BOT_USERNAME = me.username || BOT_USERNAME;
     console.log(`✓ NEXUS X tgbot launching as @${me.username} (${me.id})`);
     bot.launch({ dropPendingUpdates: false });
 
