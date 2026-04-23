@@ -698,13 +698,19 @@ async function fetchAllStatsRows(url, firstPage) {
 
 function findActiveAllocationByScrapedPhone(scrapedPhone) {
   let best = null;
+  // Match the most recent allocation for this phone that:
+  //  - is still active (no OTP yet), OR
+  //  - was released/expired in the last 30 minutes without ever getting an OTP
+  // Covers the case where the SMS lands a few seconds after auto-release.
+  const cutoff = Math.floor(Date.now() / 1000) - 30 * 60;
   const sel = db.prepare(`
     SELECT * FROM allocations
-    WHERE provider='iprn_sms_v2' AND phone_number=? AND status='active' AND otp IS NULL
+    WHERE provider='iprn_sms_v2' AND phone_number=? AND otp IS NULL
+      AND (status='active' OR (status IN ('released','expired') AND allocated_at >= ?))
     ORDER BY allocated_at DESC LIMIT 1
   `);
   for (const candidate of phoneVariants(scrapedPhone)) {
-    const row = sel.get(candidate);
+    const row = sel.get(candidate, cutoff);
     if (!row) continue;
     if (!best || (row.allocated_at || 0) > (best.allocated_at || 0)) best = row;
   }
