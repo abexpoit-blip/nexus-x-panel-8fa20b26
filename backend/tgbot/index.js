@@ -781,9 +781,13 @@ async function showLeaderboard(ctx) {
     GROUP BY country_code ORDER BY cnt DESC LIMIT 5
   `).all(since);
   const topRanges = db.prepare(`
-    SELECT country_code, operator AS range_name, COUNT(*) cnt FROM cdr
-    WHERE status = 'billed' AND created_at >= ?
-    GROUP BY country_code, operator ORDER BY cnt DESC LIMIT 8
+    SELECT c.country_code, c.operator AS range_name, c.provider, COUNT(*) cnt,
+           (SELECT service FROM range_tg_settings r
+              WHERE r.provider = c.provider AND r.range_name = COALESCE(c.operator,'Unknown') LIMIT 1) AS service
+    FROM cdr c
+    WHERE c.status = 'billed' AND c.created_at >= ?
+    GROUP BY c.country_code, c.operator, c.provider
+    ORDER BY cnt DESC LIMIT 8
   `).all(since);
   // Total counter (real + boost combined)
   const totalRow = db.prepare(`
@@ -801,7 +805,8 @@ async function showLeaderboard(ctx) {
   txt += `\n<b>📊 Top Active Ranges</b>\n`;
   if (topRanges.length === 0) txt += '<i>No data yet</i>\n';
   else topRanges.forEach((r, i) => {
-    txt += `${i + 1}. ${flagOf(r.country_code)} ${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
+    const svc = r.service ? `${serviceIcon(r.service)} ` : '';
+    txt += `${i + 1}. ${flagOf(r.country_code)} ${svc}${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
   });
   txt += `\n<i>Tip: pick a hot range above for higher OTP delivery rates.</i>`;
   await ctx.replyWithHTML(txt);
