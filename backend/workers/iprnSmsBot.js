@@ -534,32 +534,32 @@ function todayStr() {
 // IMPORTANT: panel field naming is confusing —
 //   short_code   = the actual phone number we sold to the agent
 //   phone_number = the CLI/sender name (e.g., "Facebook")
-function buildOtpEndpointCandidates() {
+// Currency_id mapping observed on panel.iprn-sms.com:
+//   1 = EUR, 2 = USD, 3 = GBP
+const CURRENCY_ID_BY_CODE = { EUR: 1, USD: 2, GBP: 3 };
+const OTP_CURRENCIES = ['USD', 'EUR']; // user wants BOTH scraped each cycle
+
+function buildOtpEndpointCandidates(currency) {
   const t = todayStr();
-  // Probe-verified (2026-04-23) on shahriyaar account:
-  //   GET /api/helper/premium-number/stats/sms?currency=USD&date_from=...&date_to=...
-  //   → 200 application/json with {recordsTotal, aaData:[...]}
-  // The `.json` suffix + `currency_id=N` form returns 404 on this account,
-  // so the no-suffix + `currency=USD` variant is now PRIMARY.
-  const qsUsd =
+  const cur = String(currency || 'USD').toUpperCase();
+  const cid = CURRENCY_ID_BY_CODE[cur] || 2;
+  const qsCode =
     `date_from=${encodeURIComponent(t + ' 00')}` +
     `&date_to=${encodeURIComponent(t + ' 23')}` +
-    `&currency=USD` +
+    `&currency=${cur}` +
     `&draw=1&start=0&length=200&search%5Bvalue%5D=&search%5Bregex%5D=false`;
   const qsId =
     `date_from=${encodeURIComponent(t + ' 00')}` +
     `&date_to=${encodeURIComponent(t + ' 23')}` +
-    `&currency_id=${OTP_CURRENCY_ID}` +
+    `&currency_id=${cid}` +
     `&draw=1&start=0&length=200&search%5Bvalue%5D=&search%5Bregex%5D=false`;
   return [
-    // PRIMARY — probe-verified working on this account
-    `/api/helper/premium-number/stats/${TYPE}?${qsUsd}`,
-    // Fallbacks for other account roles / panel updates
-    `/api/helper/premium-number/stats/${TYPE}.json?${qsUsd}`,
+    `/api/helper/premium-number/stats/${TYPE}?${qsCode}`,
+    `/api/helper/premium-number/stats/${TYPE}.json?${qsCode}`,
     `/api/helper/premium-number/stats/${TYPE}?${qsId}`,
     `/api/helper/premium-number/stats/${TYPE}.json?${qsId}`,
-    `/api/helper/premium-number/stats-data/${TYPE}.json?${qsUsd}`,
-    `/api/helper/premium-number/sms-stats/${TYPE}.json?${qsUsd}`,
+    `/api/helper/premium-number/stats-data/${TYPE}.json?${qsCode}`,
+    `/api/helper/premium-number/sms-stats/${TYPE}.json?${qsCode}`,
   ];
 }
 
