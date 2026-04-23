@@ -10,6 +10,7 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { NotificationPanel } from "@/components/NotificationPanel";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Pages } from "@/lib/lazyPages";
+import { RouteBoundary } from "@/components/RouteBoundary";
 
 // Eager-load auth pages (small + first paint)
 import Login from "@/pages/Login";
@@ -94,9 +95,10 @@ const AppRoutes = () => {
   const location = useLocation();
 
   return (
-    <Suspense fallback={<PageFallback />}>
-      <AnimatePresence mode="wait">
-        <Routes location={location} key={location.pathname}>
+    <RouteBoundary routeKey={location.pathname}>
+      <Suspense fallback={<PageFallback />}>
+        <AnimatePresence mode="wait">
+          <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<AuthPage><Login /></AuthPage>} />
           <Route path="/register" element={<AuthPage><Register /></AuthPage>} />
@@ -142,10 +144,11 @@ const AppRoutes = () => {
             <Route path="/admin/notifications" element={<AdminNotifications />} />
           </Route>
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </AnimatePresence>
-    </Suspense>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AnimatePresence>
+      </Suspense>
+    </RouteBoundary>
   );
 };
 
