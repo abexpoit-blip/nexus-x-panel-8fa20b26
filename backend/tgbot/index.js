@@ -84,18 +84,31 @@ function getBotConfig() {
 
 // Seed the public channel on boot if admin hasn't set it yet — so fake-OTP works out of the box
 function seedDefaults() {
-  try {
+  // Retry a few times — backend writers can briefly hold the DB on boot.
+  const tryOnce = () => {
     const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at)
       VALUES (?, ?, strftime('%s','now'))`);
-    stmt.run('tg_public_channel', '@nexusxotpgroup');
-    stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
-    stmt.run('tg_required_group_chat', '@nexusxotpgroup');
-    // Default dedicated OTP feed channel (admin can override via Settings)
-    stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
-    // Force-join OTP group (now points to the new feed channel)
-    stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
-    stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
-  } catch (e) { console.warn('[seedDefaults]', e.message); }
+    db.transaction(() => {
+      stmt.run('tg_public_channel', '@nexusxotpgroup');
+      stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
+      stmt.run('tg_required_group_chat', '@nexusxotpgroup');
+      stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
+      stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
+      stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
+    })();
+  };
+  let attempts = 0;
+  const run = () => {
+    try { tryOnce(); }
+    catch (e) {
+      attempts++;
+      if (/locked/i.test(e.message) && attempts < 5) {
+        return setTimeout(run, 500 * attempts); // 0.5s, 1s, 1.5s, 2s
+      }
+      console.warn('[seedDefaults]', e.message);
+    }
+  };
+  run();
 }
 seedDefaults();
 
@@ -593,9 +606,13 @@ async function showCountries(ctx) {
   );
 }
 
-bot.action(/^country:(\w+)$/, async (ctx) => {
+// No-op handler for the "Page X/Y" indicator button (so it doesn't error out)
+bot.action('noop', async (ctx) => { try { await ctx.answerCbQuery(); } catch {} });
+
+bot.action(/^country:(\w+)(?::(\d+))?$/, async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
   const cc = ctx.match[1];
+  const page = Math.max(1, parseInt(ctx.match[2], 10) || 1);
   try {
     const ranges = listRangesForCountry(cc);
     if (ranges.length === 0) {
@@ -613,16 +630,33 @@ bot.action(/^country:(\w+)$/, async (ctx) => {
       return x.length > n ? x.slice(0, n - 1) + '…' : x;
     };
     const billingOn = isBillingEnabled();
-    const buttons = ranges.map((r, i) => [
+    // ── Paginate: Telegram refuses huge inline keyboards (BUTTON_DATA_INVALID)
+    //    when the JSON markup exceeds ~10KB. Cap to 40 ranges per page.
+    const PAGE_SIZE = 40;
+    const totalPages = Math.max(1, Math.ceil(ranges.length / PAGE_SIZE));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    const pageRanges = ranges.slice(start, start + PAGE_SIZE);
+
+    const buttons = pageRanges.map((r, idx) => [
+      // i = absolute index across all ranges so `pick:cc:i` still resolves
       Markup.button.callback(
         billingOn
           ? `${serviceIcon(r.service)} ${trim(r.range_name, 26)} · ${r.cnt} · ${fmtBdt(r.tg_rate_bdt)}`
           : `${serviceIcon(r.service)} ${trim(r.range_name, 30)} · ${r.cnt} · FREE`,
-        `pick:${cc}:${i}`
+        `pick:${cc}:${start + idx}`
       ),
     ]);
+    if (totalPages > 1) {
+      const navRow = [];
+      if (safePage > 1)             navRow.push(Markup.button.callback('« Prev', `country:${cc}:${safePage - 1}`));
+      navRow.push(Markup.button.callback(`Page ${safePage}/${totalPages}`, 'noop'));
+      if (safePage < totalPages)    navRow.push(Markup.button.callback('Next »', `country:${cc}:${safePage + 1}`));
+      buttons.push(navRow);
+    }
     buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
-    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:`;
+    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:` +
+      (totalPages > 1 ? `\n<i>Page ${safePage} of ${totalPages} • ${ranges.length} total ranges</i>` : '');
     const markup = Markup.inlineKeyboard(buttons).reply_markup;
     try {
       await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: markup });
@@ -967,6 +1001,7 @@ async function pollOtps() {
     lastOtpScanAt = now();
 
     for (const c of candidates) {
+     try {
       // mark assignment as otp_received + bill the user (if rate > 0)
       const updated = db.prepare(`
         UPDATE tg_assignments
@@ -977,14 +1012,23 @@ async function pollOtps() {
 
       // bill
       if (isBillingEnabled() && c.rate_bdt > 0) {
-        db.transaction(() => {
-          db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
-            .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
-          db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
-            .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
-        })();
+        // Verify user exists before billing — prevents FOREIGN KEY errors
+        // when an assignment exists for a user that was deleted/expired.
+        const userExists = db.prepare('SELECT 1 FROM tg_users WHERE tg_user_id = ?').get(c.tg_user_id);
+        if (userExists) {
+          db.transaction(() => {
+            db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
+              .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
+            db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
+              .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
+          })();
+        } else {
+          console.warn(`[tgbot] skip billing — tg_user ${c.tg_user_id} no longer exists (assignment ${c.assignment_id})`);
+        }
       } else {
-        db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
+        try {
+          db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
+        } catch (_) { /* user may not exist */ }
       }
 
        mirrorOtpToWebsite(c);
@@ -1031,6 +1075,10 @@ async function pollOtps() {
         );
       } catch {}
       console.log(`[tgbot] OTP delivered → tg=${c.tg_user_id} num=${c.phone_number} otp=${c.otp}`);
+     } catch (perRowErr) {
+       console.error(`[tgbot] pollOtps row failed (assignment=${c.assignment_id}):`, perRowErr.message);
+       continue;
+     }
     }
   } catch (e) {
     console.error('[tgbot] pollOtps error:', e.message);
