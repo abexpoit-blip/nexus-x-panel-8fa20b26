@@ -97,8 +97,12 @@ const AppRoutes = () => {
   return (
     <RouteBoundary routeKey={location.pathname}>
       <Suspense fallback={<PageFallback />}>
-        <AnimatePresence mode="wait">
-          <Routes location={location} key={location.pathname}>
+        {/* IMPORTANT: do NOT wrap <Routes> in AnimatePresence mode="wait".
+            That blocks Suspense from rendering its fallback while a lazy
+            chunk is in flight, which produced the "black screen, must
+            reload" bug when clicking menu items. Per-screen animation
+            still works via AuthPage / AnimatedOutlet wrappers below. */}
+        <Routes location={location}>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<AuthPage><Login /></AuthPage>} />
           <Route path="/register" element={<AuthPage><Register /></AuthPage>} />
@@ -144,9 +148,8 @@ const AppRoutes = () => {
             <Route path="/admin/notifications" element={<AdminNotifications />} />
           </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AnimatePresence>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </Suspense>
     </RouteBoundary>
   );
