@@ -99,6 +99,23 @@ const bot = new Telegraf(TOKEN);
 // ---------- Helpers ----------
 const now = () => Math.floor(Date.now() / 1000);
 const fmtBdt = (n) => `৳${Number(n || 0).toFixed(2)}`;
+
+// ---------- Global billing toggle ----------
+// When OFF, the bot:
+//   • Hides all balance / wallet UI from users
+//   • Skips wallet balance check before claiming numbers
+//   • Does NOT deduct on OTP success (still increments total_otps counter)
+//   • Hides 💰 Wallet from main menu
+// Default: ON (backward compatible).
+function isBillingEnabled() {
+  try {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_billing_enabled'").get()?.value;
+    if (v == null) return true;
+    const s = String(v).toLowerCase().trim();
+    return !(s === '0' || s === 'false' || s === 'off' || s === 'no');
+  } catch { return true; }
+}
+
 const fmtTime = (sec) => {
   if (!sec) return '—';
   const d = new Date(sec * 1000);
@@ -155,20 +172,23 @@ function isBanned(tgUser) { return tgUser && tgUser.status === 'banned'; }
 
 // ---------- Main menu ----------
 function mainMenuKeyboard() {
-  return Markup.keyboard([
+  const billing = isBillingEnabled();
+  const rows = [
     ['🌍 Get Number', '📞 My Numbers'],
     ['📥 OTP History', '🔍 Active Range Checker'],
-    ['💰 Wallet', 'ℹ️ Support'],
-  ]).resize();
+  ];
+  rows.push(billing ? ['💰 Wallet', 'ℹ️ Support'] : ['ℹ️ Support']);
+  return Markup.keyboard(rows).resize();
 }
 
 function welcomeText(u) {
   const nm = u.first_name || u.username || 'friend';
+  const billing = isBillingEnabled();
   return (
     `<b>👋 Welcome ${escapeHtml(nm)}!</b>\n\n` +
     `🚀 <b>NEXUS X — Number Panel</b>\n` +
     `Fast, reliable virtual numbers for OTP verification.\n\n` +
-    `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` +
+    (billing ? `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` : '🎁 <b>FREE access — no balance needed</b>\n') +
     `📊 Total OTPs: <b>${u.total_otps}</b>\n\n` +
     `Tap a button below to begin.`
   );
