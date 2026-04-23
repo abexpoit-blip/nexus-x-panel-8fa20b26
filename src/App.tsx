@@ -82,7 +82,7 @@ const AuthPage = ({ children }: { children: React.ReactNode }) => {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
-        transition={{ type: "tween", ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number], duration: 0.3 }}
+        transition={{ type: "tween", ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number], duration: 0.18 }}
         className="min-h-screen"
       >
         {children}
