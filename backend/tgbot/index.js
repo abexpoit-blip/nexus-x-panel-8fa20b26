@@ -1003,12 +1003,13 @@ async function postPublicOtp(c) {
   const svcRaw = c.service || c.range_name || 'SMS';
   const svcLabel = String(svcRaw).replace(/[_\-]+/g, ' ').trim();
   const svcTag = serviceIcon(svcRaw);
+  const svcEmoji = serviceEmoji(svcRaw);
   const maskedNumber = maskLast4(c.phone_number);
   const otpFull = String(c.otp || '').trim();
 
   const msg =
-    `<b>কি এটা কি তোমার</b>\n` +
-    `${flag} <b>${escapeHtml(cc || '??')}</b> • ${svcTag} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>\n` +
+    `<b>Nexus X Number Panel</b>\n` +
+    `${flag} <b>${escapeHtml(cc || '??')}</b> • ${svcEmoji} ${svcTag} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>\n` +
     `<tg-spoiler>${escapeHtml(otpFull)}</tg-spoiler>`;
 
   // Inline keyboard — Bot link only (Support removed per spec)
