@@ -596,6 +596,9 @@ async function showCountries(ctx) {
 bot.action(/^country:(\w+)$/, async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
   const cc = ctx.match[1];
+  // Optional pagination: country:PH:2 → page 2
+  const parts = ctx.match.input.split(':');
+  const page = Math.max(1, parseInt(parts[2], 10) || 1);
   try {
     const ranges = listRangesForCountry(cc);
     if (ranges.length === 0) {
@@ -613,16 +616,33 @@ bot.action(/^country:(\w+)$/, async (ctx) => {
       return x.length > n ? x.slice(0, n - 1) + '…' : x;
     };
     const billingOn = isBillingEnabled();
-    const buttons = ranges.map((r, i) => [
+    // ── Paginate: Telegram refuses huge inline keyboards (BUTTON_DATA_INVALID)
+    //    when the JSON markup exceeds ~10KB. Cap to 40 ranges per page.
+    const PAGE_SIZE = 40;
+    const totalPages = Math.max(1, Math.ceil(ranges.length / PAGE_SIZE));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    const pageRanges = ranges.slice(start, start + PAGE_SIZE);
+
+    const buttons = pageRanges.map((r, idx) => [
+      // i = absolute index across all ranges so `pick:cc:i` still resolves
       Markup.button.callback(
         billingOn
           ? `${serviceIcon(r.service)} ${trim(r.range_name, 26)} · ${r.cnt} · ${fmtBdt(r.tg_rate_bdt)}`
           : `${serviceIcon(r.service)} ${trim(r.range_name, 30)} · ${r.cnt} · FREE`,
-        `pick:${cc}:${i}`
+        `pick:${cc}:${start + idx}`
       ),
     ]);
+    if (totalPages > 1) {
+      const navRow = [];
+      if (safePage > 1)             navRow.push(Markup.button.callback('« Prev', `country:${cc}:${safePage - 1}`));
+      navRow.push(Markup.button.callback(`Page ${safePage}/${totalPages}`, 'noop'));
+      if (safePage < totalPages)    navRow.push(Markup.button.callback('Next »', `country:${cc}:${safePage + 1}`));
+      buttons.push(navRow);
+    }
     buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
-    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:`;
+    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:` +
+      (totalPages > 1 ? `\n<i>Page ${safePage} of ${totalPages} • ${ranges.length} total ranges</i>` : '');
     const markup = Markup.inlineKeyboard(buttons).reply_markup;
     try {
       await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: markup });
