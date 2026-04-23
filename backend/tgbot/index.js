@@ -1385,6 +1385,7 @@ async function feedForwardAllOtps() {
     // Make sure no webhook is set (we use polling)
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
     const me = await bot.telegram.getMe();
+    BOT_USERNAME = me.username || BOT_USERNAME;
     console.log(`✓ NEXUS X tgbot launching as @${me.username} (${me.id})`);
     bot.launch({ dropPendingUpdates: false });
 
