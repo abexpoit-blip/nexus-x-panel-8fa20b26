@@ -10,6 +10,7 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { NotificationPanel } from "@/components/NotificationPanel";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Pages } from "@/lib/lazyPages";
+import { RouteBoundary } from "@/components/RouteBoundary";
 
 // Eager-load auth pages (small + first paint)
 import Login from "@/pages/Login";
@@ -43,7 +44,9 @@ const AdminMsiStatus = Pages["/admin/msi-status"].L;
 const AdminNumPanelStatus = Pages["/admin/numpanel-status"].L;
 const AdminIprnStatus = Pages["/admin/iprn-status"].L;
 const AdminIprnSmsStatus = Pages["/admin/iprn-sms-status"].L;
+const AdminIprnSmsV2Status = Pages["/admin/iprn-sms-v2-status"].L;
 const AdminSeven1telStatus = Pages["/admin/seven1tel-status"].L;
+const AdminBots = Pages["/admin/bots"].L;
 const AdminProviderSettings = Pages["/admin/provider-settings"].L;
 const AdminWithdrawals = Pages["/admin/withdrawals"].L;
 const AdminTgBot = Pages["/admin/tg-bot"].L;
@@ -92,9 +95,10 @@ const AppRoutes = () => {
   const location = useLocation();
 
   return (
-    <Suspense fallback={<PageFallback />}>
-      <AnimatePresence mode="wait">
-        <Routes location={location} key={location.pathname}>
+    <RouteBoundary routeKey={location.pathname}>
+      <Suspense fallback={<PageFallback />}>
+        <AnimatePresence mode="wait">
+          <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<AuthPage><Login /></AuthPage>} />
           <Route path="/register" element={<AuthPage><Register /></AuthPage>} />
@@ -132,16 +136,19 @@ const AppRoutes = () => {
             <Route path="/admin/numpanel-status" element={<AdminNumPanelStatus />} />
             <Route path="/admin/iprn-status" element={<AdminIprnStatus />} />
             <Route path="/admin/iprn-sms-status" element={<AdminIprnSmsStatus />} />
+            <Route path="/admin/iprn-sms-v2-status" element={<AdminIprnSmsV2Status />} />
             <Route path="/admin/seven1tel-status" element={<AdminSeven1telStatus />} />
+            <Route path="/admin/bots" element={<AdminBots />} />
             <Route path="/admin/provider-settings" element={<AdminProviderSettings />} />
             <Route path="/admin/tg-bot" element={<AdminTgBot />} />
             <Route path="/admin/notifications" element={<AdminNotifications />} />
           </Route>
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </AnimatePresence>
-    </Suspense>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AnimatePresence>
+      </Suspense>
+    </RouteBoundary>
   );
 };
 

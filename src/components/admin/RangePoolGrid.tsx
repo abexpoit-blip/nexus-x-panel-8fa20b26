@@ -21,7 +21,7 @@ export type RangeRow = {
   service_tag: string | null;
 };
 
-type Provider = "numpanel" | "ims" | "msi" | "iprn" | "iprn_sms" | "seven1tel";
+type Provider = "numpanel" | "ims" | "msi" | "iprn" | "iprn_sms" | "iprn_sms_v2" | "seven1tel";
 
 const TAG_COLORS = [
   { key: "cyan",   cls: "from-neon-cyan/20 to-neon-cyan/5 border-neon-cyan/40 text-neon-cyan",        swatch: "bg-neon-cyan" },
@@ -54,6 +54,7 @@ function apiSave(provider: Provider, body: Record<string, unknown>) {
   if (provider === "msi") return api.admin.msiRangeMetaSave(body as Parameters<typeof api.admin.msiRangeMetaSave>[0]);
   if (provider === "iprn") return api.admin.iprnRangeMetaSave(body as Parameters<typeof api.admin.iprnRangeMetaSave>[0]);
   if (provider === "iprn_sms") return api.admin.iprnSmsRangeMetaSave(body as Parameters<typeof api.admin.iprnSmsRangeMetaSave>[0]);
+  if (provider === "iprn_sms_v2") return api.admin.iprnSmsV2RangeMetaSave(body as Parameters<typeof api.admin.iprnSmsV2RangeMetaSave>[0]);
   return api.admin.seven1telRangeMetaSave(body as Parameters<typeof api.admin.seven1telRangeMetaSave>[0]);
 }
 function apiDelete(provider: Provider, prefix: string) {
@@ -62,6 +63,7 @@ function apiDelete(provider: Provider, prefix: string) {
   if (provider === "msi") return api.admin.msiRangeMetaDelete(prefix);
   if (provider === "iprn") return api.admin.iprnRangeMetaDelete(prefix);
   if (provider === "iprn_sms") return api.admin.iprnSmsRangeMetaDelete(prefix);
+  if (provider === "iprn_sms_v2") return api.admin.iprnSmsV2RangeMetaDelete(prefix);
   return api.admin.seven1telRangeMetaDelete(prefix);
 }
 
