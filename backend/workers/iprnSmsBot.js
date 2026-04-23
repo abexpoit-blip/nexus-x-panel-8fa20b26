@@ -78,6 +78,7 @@ const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Geck
 const cookies = new Map();
 let loggedIn = false;
 let busy = false;
+let otpBusy = false;
 let numbersTimer = null;
 let otpTimer = null;
 let cleanupTimer = null;
@@ -222,6 +223,7 @@ function getStatus() {
 
 // OTP cache (currently no live OTP feed for this account — kept for parity)
 const recentOtpCache = new Map();
+const processedOtpCache = new Map(); // key(provider row identity) -> ts
 function phoneVariants(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return [];
@@ -247,6 +249,51 @@ function rememberOtp(phone) {
     const cutoff = Date.now() - 6 * 60 * 60 * 1000; // 6h
     for (const [k, t] of recentOtpCache) if (t < cutoff) recentOtpCache.delete(k);
   }
+}
+
+function pruneProcessedOtpCache() {
+  const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  for (const [k, t] of processedOtpCache) if (t < cutoff) processedOtpCache.delete(k);
+}
+
+function rowCreatedTs(raw) {
+  const v = raw?.created || raw?.notified || raw?.created_at || raw?.ts || null;
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.floor(v);
+  if (!v) return null;
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) return +s;
+  const ms = Date.parse(s.replace(' ', 'T'));
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+function makeProcessedOtpKey(raw, normalized, otp) {
+  const phone = normalized?.phone || '';
+  const cli = normalized?.cli || raw?.source || raw?.phone_number || '';
+  const created = rowCreatedTs(raw) || 0;
+  return [phone, otp || '', cli, created].join('|');
+}
+
+function wasOtpAlreadyHandled(providerId, raw, normalized, otp) {
+  const key = `${providerId}:${makeProcessedOtpKey(raw, normalized, otp)}`;
+  if (processedOtpCache.has(key)) return true;
+  const row = db.prepare(`
+    SELECT 1 FROM otp_audit_log
+    WHERE provider = ? AND otp_code = ? AND phone_number = ?
+      AND event IN ('matched','followup_matched','credited','followup_delivered')
+      AND COALESCE(detail, '') LIKE ?
+    LIMIT 1
+  `).get(providerId, String(otp || ''), normalized?.phone || null, `%${String(rowCreatedTs(raw) || 0)}%`);
+  if (row) {
+    processedOtpCache.set(key, Date.now());
+    pruneProcessedOtpCache();
+    return true;
+  }
+  return false;
+}
+
+function markOtpHandled(providerId, raw, normalized, otp) {
+  processedOtpCache.set(`${providerId}:${makeProcessedOtpKey(raw, normalized, otp)}`, Date.now());
+  if (processedOtpCache.size > 5000) pruneProcessedOtpCache();
 }
 
 // ---- Pool ownership (FK requires real user_id) ----
@@ -858,6 +905,9 @@ async function scrapeOtpsForCurrency(currency) {
     if (!row) continue;
     const otp = extractOtpFromMessage(row.message);
     if (!otp) continue;
+    const createdTs = rowCreatedTs(raw);
+    if (createdTs && createdTs < Math.floor(Date.now() / 1000) - 3 * 3600) continue;
+    if (wasOtpAlreadyHandled('iprn_sms', raw, row, otp)) continue;
 
     rememberOtp(row.phone);
 
@@ -869,13 +919,15 @@ async function scrapeOtpsForCurrency(currency) {
       const followup = findRecentAllocationForFollowupOtp(row.phone);
       if (followup && followup.otp && String(followup.otp) !== String(otp)) {
         try {
-          await markOtpReceived(followup, otp, row.cli, { endpoint: workingUrl, currency });
+          const ok = await markOtpReceived(followup, otp, row.cli, { endpoint: workingUrl, currency }, { allowFollowup: true });
+          if (!ok) continue;
+          markOtpHandled('iprn_sms', raw, row, otp);
           logOtpEvent({
             provider: 'iprn_sms', event: 'followup_matched',
             user_id: followup.user_id, allocation_id: followup.id,
             phone_number: row.phone, otp_code: otp,
             endpoint: workingUrl, currency,
-            detail: `Follow-up OTP (prev=${followup.otp} new=${otp})${row.cli ? ` · ${row.cli}` : ''}`,
+            detail: `Follow-up OTP (prev=${followup.otp} new=${otp}) · created=${createdTs || 0}${row.cli ? ` · ${row.cli}` : ''}`,
           });
           delivered++;
           status.otpsDeliveredTotal++;
@@ -900,7 +952,9 @@ async function scrapeOtpsForCurrency(currency) {
     }
 
     try {
-      await markOtpReceived(a, otp, row.cli, { endpoint: workingUrl, currency });
+      const ok = await markOtpReceived(a, otp, row.cli, { endpoint: workingUrl, currency });
+      if (!ok) continue;
+      markOtpHandled('iprn_sms', raw, row, otp);
       logOtpEvent({
         provider: 'iprn_sms',
         event: 'matched',
@@ -912,6 +966,7 @@ async function scrapeOtpsForCurrency(currency) {
         currency,
         detail: [
           row.cli ? `Matched (${row.cli})` : 'Matched',
+          `created=${createdTs || 0}`,
           a.phone_number && a.phone_number !== row.phone ? `stored=${a.phone_number}` : null,
         ].filter(Boolean).join(' · '),
       });
@@ -943,6 +998,8 @@ async function scrapeOtpsForCurrency(currency) {
 
 async function runOtpLoop() {
   if (_stopped) return;
+  if (otpBusy) return;
+  otpBusy = true;
   try {
     await scrapeOtps();
     status.consecFail = 0;
@@ -960,6 +1017,8 @@ async function runOtpLoop() {
       detail: e.message,
     });
     if (/Session expired/.test(e.message)) loggedIn = false;
+  } finally {
+    otpBusy = false;
   }
 }
 
