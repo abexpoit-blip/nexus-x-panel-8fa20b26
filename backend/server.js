@@ -137,6 +137,10 @@ app.listen(PORT, () => {
   try { require('./workers/iprnSmsBot').start(); }
   catch (e) { console.warn('iprn_sms bot start error:', e.message); }
 
+  // Start IPRN-SMS V2 bot (separate account on panel.iprn-sms.com).
+  try { require('./workers/iprnSmsBotV2').start(); }
+  catch (e) { console.warn('iprn_sms_v2 bot start error:', e.message); }
+
   // Start Seven1Tel bot (no-op if SEVEN1TEL_ENABLED=false). Same /ints panel as MSI.
   try { require('./workers/seven1telBot').start(); }
   catch (e) { console.warn('seven1tel bot start error:', e.message); }

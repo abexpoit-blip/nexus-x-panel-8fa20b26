@@ -303,6 +303,7 @@ router.get('/pool-inspector', async (req, res) => {
     const POOL_LABELS = {
       ims: 'Server B', msi: 'Server C', numpanel: 'Server D',
       iprn: 'Server E', iprn_sms: 'Server F', seven1tel: 'Server G',
+      iprn_sms_v2: 'Server F2',
     };
     const isEnabled = (id) => {
       const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
@@ -755,7 +756,7 @@ router.get('/provider-status', async (req, res) => {
 router.put('/provider-toggle', async (req, res) => {
   try {
     const { id, enabled } = req.body || {};
-    const validIds = ['msi', 'iprn', 'iprn_sms', 'numpanel', 'ims', 'seven1tel'];
+    const validIds = ['msi', 'iprn', 'iprn_sms', 'iprn_sms_v2', 'numpanel', 'ims', 'seven1tel'];
     if (!validIds.includes(id)) {
       return res.status(400).json({ error: `id must be one of: ${validIds.join(', ')}` });
     }
@@ -771,6 +772,7 @@ router.put('/provider-toggle', async (req, res) => {
     const botFile =
       id === 'iprn' ? 'iprnBot' :
       id === 'iprn_sms' ? 'iprnSmsBot' :
+      id === 'iprn_sms_v2' ? 'iprnSmsBotV2' :
       id === 'msi' ? 'msiBot' :
       id === 'seven1tel' ? 'seven1telBot' :
       id === 'numpanel' ? 'numpanelBot' :
@@ -1249,6 +1251,7 @@ const RANGE_META_TABLES = {
   msi: 'msi_range_meta',
   iprn: 'iprn_range_meta',
   iprn_sms: 'iprn_sms_range_meta',
+  iprn_sms_v2: 'iprn_sms_v2_range_meta',
   seven1tel: 'seven1tel_range_meta',
 };
 const VALID_SERVICE_TAGS = new Set(['facebook', 'whatsapp', 'telegram', 'instagram', 'twitter', 'tiktok', 'google', 'other', null, '']);
@@ -1303,6 +1306,7 @@ rangeMetaRoutes('ims');
 rangeMetaRoutes('msi');
 rangeMetaRoutes('iprn');
 rangeMetaRoutes('iprn_sms');
+rangeMetaRoutes('iprn_sms_v2');
 rangeMetaRoutes('seven1tel');
 
 router.get('/numpanel-credentials', (req, res) => {
