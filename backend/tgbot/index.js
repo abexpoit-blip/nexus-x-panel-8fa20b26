@@ -882,6 +882,17 @@ async function showWallet(ctx) {
 // ============================================================
 
 let lastOtpScanAt = now();
+// Separate cursor for the UNIVERSAL feed forwarder — covers website-agent OTPs,
+// telegram-bot OTPs, and any provider that writes to allocations.otp directly.
+let lastFeedScanAt = now();
+const recentlyForwarded = new Map(); // allocation_id → timestamp (auto-pruned)
+function markForwarded(id) {
+  recentlyForwarded.set(id, now());
+  if (recentlyForwarded.size > 5000) {
+    const cutoff = now() - 3600;
+    for (const [k, v] of recentlyForwarded) if (v < cutoff) recentlyForwarded.delete(k);
+  }
+}
 
 function mirrorOtpToWebsite(c) {
   let sysUser = db.prepare("SELECT id FROM users WHERE username = '__ims_pool__'").get();
