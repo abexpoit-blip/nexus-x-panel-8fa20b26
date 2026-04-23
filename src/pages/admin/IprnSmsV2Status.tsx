@@ -115,6 +115,8 @@ export default function IprnSmsV2Status() {
         }
       />
 
+      <AutoPoolCard botId="iprn_sms_v2" />
+
       {/* Top KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
