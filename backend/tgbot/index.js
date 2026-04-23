@@ -84,18 +84,31 @@ function getBotConfig() {
 
 // Seed the public channel on boot if admin hasn't set it yet — so fake-OTP works out of the box
 function seedDefaults() {
-  try {
+  // Retry a few times — backend writers can briefly hold the DB on boot.
+  const tryOnce = () => {
     const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at)
       VALUES (?, ?, strftime('%s','now'))`);
-    stmt.run('tg_public_channel', '@nexusxotpgroup');
-    stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
-    stmt.run('tg_required_group_chat', '@nexusxotpgroup');
-    // Default dedicated OTP feed channel (admin can override via Settings)
-    stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
-    // Force-join OTP group (now points to the new feed channel)
-    stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
-    stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
-  } catch (e) { console.warn('[seedDefaults]', e.message); }
+    db.transaction(() => {
+      stmt.run('tg_public_channel', '@nexusxotpgroup');
+      stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
+      stmt.run('tg_required_group_chat', '@nexusxotpgroup');
+      stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
+      stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
+      stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
+    })();
+  };
+  let attempts = 0;
+  const run = () => {
+    try { tryOnce(); }
+    catch (e) {
+      attempts++;
+      if (/locked/i.test(e.message) && attempts < 5) {
+        return setTimeout(run, 500 * attempts); // 0.5s, 1s, 1.5s, 2s
+      }
+      console.warn('[seedDefaults]', e.message);
+    }
+  };
+  run();
 }
 seedDefaults();
 
