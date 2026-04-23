@@ -606,6 +606,9 @@ async function showCountries(ctx) {
   );
 }
 
+// No-op handler for the "Page X/Y" indicator button (so it doesn't error out)
+bot.action('noop', async (ctx) => { try { await ctx.answerCbQuery(); } catch {} });
+
 bot.action(/^country:(\w+)(?::(\d+))?$/, async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
   const cc = ctx.match[1];
