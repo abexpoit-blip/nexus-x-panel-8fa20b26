@@ -560,6 +560,11 @@ function BroadcastTab() {
         <p className="text-xs text-muted-foreground">
           HTML supported: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, <code>&lt;a&gt;</code>. Sent at 30 msg/sec.
         </p>
+        <p className="text-[11px] text-neon-cyan/80 bg-neon-cyan/[0.04] border border-neon-cyan/20 rounded-md px-3 py-2">
+          📣 Broadcasts are sent as <b>private DMs</b> to every active TG user <b>and</b> mirrored to the
+          configured public channel (Overview → <code>tg_public_channel</code>). Users who never opened the bot
+          privately will only see it in the channel.
+        </p>
         <textarea
           value={msg} onChange={e => setMsg(e.target.value)} rows={5}
           placeholder="🎉 Big news! New ranges added..."
