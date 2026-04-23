@@ -557,23 +557,37 @@ async function showCountries(ctx) {
 }
 
 bot.action(/^country:(\w+)$/, async (ctx) => {
-  await ctx.answerCbQuery();
+  try { await ctx.answerCbQuery(); } catch {}
   const cc = ctx.match[1];
-  const ranges = listRangesForCountry(cc);
-  if (ranges.length === 0) {
-    return ctx.editMessageText(`😕 No ranges available for ${countryName(cc)} right now.`);
+  try {
+    const ranges = listRangesForCountry(cc);
+    if (ranges.length === 0) {
+      try { await ctx.editMessageText(`😕 No ranges available for ${countryName(cc)} right now.`); }
+      catch { await ctx.replyWithHTML(`😕 No ranges available for ${countryName(cc)} right now.`); }
+      return;
+    }
+    // Telegram callback_data has a 64-byte limit. Range names can be long
+    // ("Pakistan Pakistan-Cn-01 …") → encode by index instead of name.
+    const buttons = ranges.map((r, i) => [
+      Markup.button.callback(
+        `${flagOf(cc)} ${serviceIcon(r.service)} ${r.range_name} — ${r.cnt} • ${fmtBdt(r.tg_rate_bdt)}`,
+        `pick:${cc}:${i}`
+      ),
+    ]);
+    buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
+    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:`;
+    const markup = Markup.inlineKeyboard(buttons).reply_markup;
+    try {
+      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: markup });
+    } catch (editErr) {
+      // Edit can fail (message too old, identical content, photo msg, etc.) → send fresh
+      console.warn('[tgbot] country edit failed, sending fresh:', editErr.description || editErr.message);
+      await ctx.replyWithHTML(text, { reply_markup: markup });
+    }
+  } catch (e) {
+    console.error('[tgbot] country handler error:', e.message);
+    try { await ctx.reply('⚠️ Something went wrong loading ranges. Tap 🌍 Get Number again.'); } catch {}
   }
-  const buttons = ranges.map(r => [
-    Markup.button.callback(
-      `${flagOf(cc)} ${serviceIcon(r.service)} ${r.range_name} — ${r.cnt} • ${fmtBdt(r.tg_rate_bdt)}`,
-      `range:${r.provider}:${encodeURIComponent(r.range_name)}:${cc}`
-    ),
-  ]);
-  buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
-  await ctx.editMessageText(
-    `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:`,
-    { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup }
-  );
 });
 
 bot.action('menu:get', async (ctx) => {
