@@ -90,6 +90,8 @@ function seedDefaults() {
     stmt.run('tg_public_channel', '@nexusxotpgroup');
     stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
     stmt.run('tg_required_group_chat', '@nexusxotpgroup');
+    // Default dedicated OTP feed channel (admin can override via Settings)
+    stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
   } catch (e) { console.warn('[seedDefaults]', e.message); }
 }
 seedDefaults();
