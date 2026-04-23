@@ -40,6 +40,7 @@ vi.mock("@/lib/api", async () => {
       operators: vi.fn(() => Promise.resolve({ operators: [{ id: 10, name: "Grameen", price_bdt: 5 }] })),
       msiRanges: vi.fn(() => Promise.resolve({ ranges: [{ name: "Peru-Bitel", count: 42 }] })),
       imsRanges: vi.fn(() => Promise.resolve({ ranges: [] })),
+      allRanges: vi.fn(() => Promise.resolve({ ranges: [] })),
       myNumbers: vi.fn(() => Promise.resolve({ numbers: [] })),
       getNumber: vi.fn((args: unknown) => apiState.getNumberImpl(args)),
       syncOtp: vi.fn(() => Promise.resolve({ updated: 0 })),
