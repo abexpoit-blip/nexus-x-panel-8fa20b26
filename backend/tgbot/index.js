@@ -99,6 +99,23 @@ const bot = new Telegraf(TOKEN);
 // ---------- Helpers ----------
 const now = () => Math.floor(Date.now() / 1000);
 const fmtBdt = (n) => `৳${Number(n || 0).toFixed(2)}`;
+
+// ---------- Global billing toggle ----------
+// When OFF, the bot:
+//   • Hides all balance / wallet UI from users
+//   • Skips wallet balance check before claiming numbers
+//   • Does NOT deduct on OTP success (still increments total_otps counter)
+//   • Hides 💰 Wallet from main menu
+// Default: ON (backward compatible).
+function isBillingEnabled() {
+  try {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_billing_enabled'").get()?.value;
+    if (v == null) return true;
+    const s = String(v).toLowerCase().trim();
+    return !(s === '0' || s === 'false' || s === 'off' || s === 'no');
+  } catch { return true; }
+}
+
 const fmtTime = (sec) => {
   if (!sec) return '—';
   const d = new Date(sec * 1000);
@@ -155,20 +172,23 @@ function isBanned(tgUser) { return tgUser && tgUser.status === 'banned'; }
 
 // ---------- Main menu ----------
 function mainMenuKeyboard() {
-  return Markup.keyboard([
+  const billing = isBillingEnabled();
+  const rows = [
     ['🌍 Get Number', '📞 My Numbers'],
     ['📥 OTP History', '🔍 Active Range Checker'],
-    ['💰 Wallet', 'ℹ️ Support'],
-  ]).resize();
+  ];
+  rows.push(billing ? ['💰 Wallet', 'ℹ️ Support'] : ['ℹ️ Support']);
+  return Markup.keyboard(rows).resize();
 }
 
 function welcomeText(u) {
   const nm = u.first_name || u.username || 'friend';
+  const billing = isBillingEnabled();
   return (
     `<b>👋 Welcome ${escapeHtml(nm)}!</b>\n\n` +
     `🚀 <b>NEXUS X — Number Panel</b>\n` +
     `Fast, reliable virtual numbers for OTP verification.\n\n` +
-    `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` +
+    (billing ? `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` : '🎁 <b>FREE access — no balance needed</b>\n') +
     `📊 Total OTPs: <b>${u.total_otps}</b>\n\n` +
     `Tap a button below to begin.`
   );
@@ -394,7 +414,7 @@ function renderBatchCard(assignments) {
   let txt =
     `📱 <b>Your Numbers (${assignments.length})</b>\n` +
     `${flag} <b>${escapeHtml(cName)}</b> — ${svc}\n` +
-    `${timer} until expiry • Rate: ${fmtBdt(head.rate_bdt)} per OTP\n` +
+    `${timer} until expiry${isBillingEnabled() ? ` • Rate: ${fmtBdt(head.rate_bdt)} per OTP` : ' • 🎁 FREE'}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n`;
 
   assignments.forEach((a, i) => {
@@ -529,6 +549,9 @@ bot.hears('🏆 Leaderboard', async (ctx) => {
 
 bot.hears('💰 Wallet', async (ctx) => {
   const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
+  if (!isBillingEnabled()) {
+    return ctx.replyWithHTML('🎁 <b>Wallet disabled</b> — bot is currently in FREE mode. Enjoy unlimited OTPs!');
+  }
   await showWallet(ctx);
 });
 
@@ -584,9 +607,12 @@ bot.action(/^country:(\w+)$/, async (ctx) => {
       const x = String(s || '').replace(/\s+/g, ' ').trim();
       return x.length > n ? x.slice(0, n - 1) + '…' : x;
     };
+    const billingOn = isBillingEnabled();
     const buttons = ranges.map((r, i) => [
       Markup.button.callback(
-        `${serviceIcon(r.service)} ${trim(r.range_name, 26)} · ${r.cnt} · ${fmtBdt(r.tg_rate_bdt)}`,
+        billingOn
+          ? `${serviceIcon(r.service)} ${trim(r.range_name, 26)} · ${r.cnt} · ${fmtBdt(r.tg_rate_bdt)}`
+          : `${serviceIcon(r.service)} ${trim(r.range_name, 30)} · ${r.cnt} · FREE`,
         `pick:${cc}:${i}`
       ),
     ]);
@@ -649,11 +675,13 @@ async function claimAndDeliver(ctx, provider, rangeName, cc) {
   if (getDisabledRangeKeys().has(`${provider}::${rangeName}`)) {
     return ctx.reply('🚫 This range was just disabled by admin. Please pick another.');
   }
-  const rate = setting.tg_rate_bdt || 0;
+  const billing = isBillingEnabled();
+  // When billing is OFF globally, force rate=0 so charges + balance check are skipped.
+  const rate = billing ? (setting.tg_rate_bdt || 0) : 0;
 
   // We reserve = 1 OTP success worth × batch (refunded if no OTP).
   // For simplicity charge only on OTP arrival, but block if balance < rate.
-  if (rate > 0 && u.balance_bdt < rate) {
+  if (billing && rate > 0 && u.balance_bdt < rate) {
     return ctx.replyWithHTML(
       `💸 <b>Insufficient balance.</b>\nYour balance: ${fmtBdt(u.balance_bdt)}\n` +
       `Each OTP costs: ${fmtBdt(rate)}\nContact admin to top up.`
@@ -932,7 +960,7 @@ async function pollOtps() {
       if (updated.changes !== 1) continue;
 
       // bill
-      if (c.rate_bdt > 0) {
+      if (isBillingEnabled() && c.rate_bdt > 0) {
         db.transaction(() => {
           db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
             .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
