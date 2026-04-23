@@ -22,17 +22,18 @@ const AdminLogin = () => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const loggedInUser = await login(username, password, "admin");
-    setLoading(false);
-    if (!loggedInUser) {
-      setError("Invalid credentials");
-      return;
+    try {
+      const loggedInUser = await login(username, password, "admin");
+      if (loggedInUser.role !== "admin") {
+        setError("This portal is for administrators only");
+        return;
+      }
+      navigate("/admin/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setLoading(false);
     }
-    if (loggedInUser.role !== "admin") {
-      setError("This portal is for administrators only");
-      return;
-    }
-    navigate("/admin/dashboard");
   };
 
   return (
