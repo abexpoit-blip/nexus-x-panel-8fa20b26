@@ -1330,6 +1330,7 @@ async function feedForwardAllOtps() {
     bot.launch({ dropPendingUpdates: false });
     setInterval(pollOtps, 4000);
     setInterval(expireOldAssignments, 30_000);
+    setInterval(feedForwardAllOtps, 5000);
     setInterval(processBroadcasts, 5_000);
     scheduleNextFakeTick();
     console.log('✓ OTP poller (4s) + expiry janitor (30s, auto-vanish) + broadcast worker (5s) + fake-OTP broadcaster (toggle) started');
