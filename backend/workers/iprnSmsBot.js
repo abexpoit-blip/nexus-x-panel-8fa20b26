@@ -863,9 +863,30 @@ async function scrapeOtpsForCurrency(currency) {
 
     const a = findActiveAllocationByScrapedPhone(row.phone);
     if (!a) {
-      // Log unmatched OTPs too so admin can see "we saw an OTP but no agent
-      // had this number active" — useful when agents complain "OTP missing"
-      // because their allocation already expired.
+      // No active allocation — try follow-up path: the same number got a
+      // 2nd/3rd OTP (e.g. Facebook resend) AFTER its first OTP was already
+      // delivered. Re-deliver to the same agent IF the code is different.
+      const followup = findRecentAllocationForFollowupOtp(row.phone);
+      if (followup && followup.otp && String(followup.otp) !== String(otp)) {
+        try {
+          await markOtpReceived(followup, otp, row.cli, { endpoint: workingUrl, currency });
+          logOtpEvent({
+            provider: 'iprn_sms', event: 'followup_matched',
+            user_id: followup.user_id, allocation_id: followup.id,
+            phone_number: row.phone, otp_code: otp,
+            endpoint: workingUrl, currency,
+            detail: `Follow-up OTP (prev=${followup.otp} new=${otp})${row.cli ? ` · ${row.cli}` : ''}`,
+          });
+          delivered++;
+          status.otpsDeliveredTotal++;
+          console.log(`[iprn_sms-bot] ✓ follow-up OTP: ${row.phone} → ${otp} (was ${followup.otp})`);
+          logEvent('success', `Follow-up OTP: ${row.phone} → ${otp}`);
+        } catch (e) {
+          dwarn('[iprn_sms-bot] follow-up markOtpReceived failed:', e.message);
+        }
+        continue;
+      }
+      // True no-match — log it
       logOtpEvent({
         provider: 'iprn_sms',
         event: 'no_match',
