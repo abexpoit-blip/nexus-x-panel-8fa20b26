@@ -42,11 +42,13 @@ const adminNav: NavItem[] = [
   { label: "Withdrawals", path: "/admin/withdrawals", icon: ArrowDownToLine },
   { label: "Security", path: "/admin/security", icon: Shield },
   { label: "SMS CDR", path: "/admin/cdr", icon: FileText },
+  { label: "All Bots", path: "/admin/bots", icon: Layers },
   { label: "IMS Bot", path: "/admin/ims-status", icon: Bot },
   { label: "MSI Bot", path: "/admin/msi-status", icon: Bot },
   { label: "NumPanel Bot", path: "/admin/numpanel-status", icon: Bot },
   { label: "IPRN Bot", path: "/admin/iprn-status", icon: Bot },
   { label: "IPRN-SMS Bot", path: "/admin/iprn-sms-status", icon: Bot },
+  { label: "IPRN-SMS Bot V2", path: "/admin/iprn-sms-v2-status", icon: Bot },
   { label: "Seven1Tel Bot", path: "/admin/seven1tel-status", icon: Bot },
   { label: "TG Bot", path: "/admin/tg-bot", icon: Bot },
   // Provider Settings (OTP expiry / recent-OTP window) is now embedded inside

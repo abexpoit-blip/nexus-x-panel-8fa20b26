@@ -690,6 +690,15 @@ export const api = {
     iprnSmsRangeMetaDelete: (prefix: string) =>
       request<{ ok: boolean }>(`/admin/iprn_sms-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
 
+    // ---- IPRN-SMS V2 range meta (shared rangeMetaRoutes('iprn_sms_v2')) ----
+    iprnSmsV2RangeMetaSave: (body: {
+      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
+      priority?: number | null; request_override?: number | null; notes?: string | null;
+      disabled?: boolean; service_tag?: string | null;
+    }) => request<{ ok: boolean }>("/admin/iprn_sms_v2-range-meta", { method: "PUT", body: JSON.stringify(body) }),
+    iprnSmsV2RangeMetaDelete: (prefix: string) =>
+      request<{ ok: boolean }>(`/admin/iprn_sms_v2-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
+
     // ---- Global provider settings ----
     systemHealth: () => request<SystemHealth>("/admin/system-health"),
     providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
@@ -867,6 +876,59 @@ export const api = {
         total: number; limit: number; offset: number;
         counts: Record<string, number>;
       }>(`/admin/iprn-sms-numbers${tail ? `?${tail}` : ""}`);
+    },
+  },
+
+  // ===== IPRN-SMS V2 Bot admin (second account on panel.iprn-sms.com) =====
+  iprnSmsV2: {
+    status: () => request<{ status: any }>("/admin/iprn-sms-v2-status"),
+    restart: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-restart", { method: "POST" }),
+    start: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-start", { method: "POST" }),
+    stop: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-stop", { method: "POST" }),
+    scrapeNow: () => request<{ ok: boolean; added?: number; error?: string }>("/admin/iprn-sms-v2-scrape-now", { method: "POST" }),
+    poolBreakdown: () => request<{
+      ranges: Array<{
+        name: string; range_name: string; count: number;
+        last_added: number | null; first_added: number | null;
+        custom_name: string | null; tag_color: string | null; priority: number | null;
+        request_override: number | null; notes: string | null;
+        disabled: number; service_tag: string | null;
+      }>;
+      totalPool: number; totalActive: number; totalUsed: number;
+    }>("/admin/iprn-sms-v2-pool-breakdown"),
+    credentials: () => request<{
+      username: string; password_set: boolean; base_url: string;
+      sms_type: string; enabled: boolean;
+      sources: { username: string; password: string };
+    }>("/admin/iprn-sms-v2-credentials"),
+    credentialsSave: (body: { username?: string; password?: string; base_url?: string; sms_type?: string; enabled?: boolean }) =>
+      request<{ ok: boolean }>("/admin/iprn-sms-v2-credentials", { method: "PUT", body: JSON.stringify(body) }),
+    cookies: () =>
+      request<{ has_cookies: boolean; count: number; saved_at: number | null; names?: string[] }>("/admin/iprn-sms-v2-cookies"),
+    cookiesClear: () =>
+      request<{ ok: boolean }>("/admin/iprn-sms-v2-cookies", { method: "DELETE" }),
+    testLogin: () =>
+      request<{ ok: boolean; username?: string; base_url?: string; loggedIn?: boolean; latency_ms: number; error?: string }>(
+        "/admin/iprn-sms-v2-test-login",
+        { method: "POST" },
+      ),
+    numbers: (params: { status?: string; q?: string; limit?: number; offset?: number } = {}) => {
+      const qs = new URLSearchParams();
+      if (params.status) qs.set("status", params.status);
+      if (params.q) qs.set("q", params.q);
+      if (params.limit != null) qs.set("limit", String(params.limit));
+      if (params.offset != null) qs.set("offset", String(params.offset));
+      const tail = qs.toString();
+      return request<{
+        rows: Array<{
+          id: number; phone_number: string; range_name: string | null;
+          country_code: string | null; status: string;
+          allocated_at: number; user_id: number; otp: string | null;
+          username: string | null;
+        }>;
+        total: number; limit: number; offset: number;
+        counts: Record<string, number>;
+      }>(`/admin/iprn-sms-v2-numbers${tail ? `?${tail}` : ""}`);
     },
   },
 
