@@ -1025,11 +1025,8 @@ async function postPublicOtp(c) {
   // Line 2: full OTP wrapped in spoiler (<tg-spoiler>) so users tap to reveal
   // Inline keyboard: single "‼️ Bot" button — no Support button.
   const cc = (c.country_code || '').toUpperCase();
-  const flag = flagOf(c.country_code) || '🏳️';
-  const flagCustom = flagCustomEmoji(c.country_code);
-  const flagBrand = flagCustom
-    ? `<tg-emoji emoji-id="${flagCustom.id}">${flagCustom.fallback}</tg-emoji>`
-    : flag;
+  // Render flag as premium custom emoji when ID is mapped, else unicode flag.
+  const flagBrand = renderFlagHtml(cc);
   const svcRaw = c.service || c.range_name || 'SMS';
   const svcLabel = String(svcRaw).replace(/[_\-]+/g, ' ').trim();
   const svcTag = serviceIcon(svcRaw);
