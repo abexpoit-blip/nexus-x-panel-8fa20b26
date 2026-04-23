@@ -1001,6 +1001,7 @@ async function pollOtps() {
     lastOtpScanAt = now();
 
     for (const c of candidates) {
+     try {
       // mark assignment as otp_received + bill the user (if rate > 0)
       const updated = db.prepare(`
         UPDATE tg_assignments
@@ -1011,14 +1012,23 @@ async function pollOtps() {
 
       // bill
       if (isBillingEnabled() && c.rate_bdt > 0) {
-        db.transaction(() => {
-          db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
-            .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
-          db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
-            .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
-        })();
+        // Verify user exists before billing — prevents FOREIGN KEY errors
+        // when an assignment exists for a user that was deleted/expired.
+        const userExists = db.prepare('SELECT 1 FROM tg_users WHERE tg_user_id = ?').get(c.tg_user_id);
+        if (userExists) {
+          db.transaction(() => {
+            db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
+              .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
+            db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
+              .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
+          })();
+        } else {
+          console.warn(`[tgbot] skip billing — tg_user ${c.tg_user_id} no longer exists (assignment ${c.assignment_id})`);
+        }
       } else {
-        db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
+        try {
+          db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
+        } catch (_) { /* user may not exist */ }
       }
 
        mirrorOtpToWebsite(c);
@@ -1065,6 +1075,10 @@ async function pollOtps() {
         );
       } catch {}
       console.log(`[tgbot] OTP delivered → tg=${c.tg_user_id} num=${c.phone_number} otp=${c.otp}`);
+     } catch (perRowErr) {
+       console.error(`[tgbot] pollOtps row failed (assignment=${c.assignment_id}):`, perRowErr.message);
+       continue;
+     }
     }
   } catch (e) {
     console.error('[tgbot] pollOtps error:', e.message);
