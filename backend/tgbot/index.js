@@ -298,23 +298,26 @@ function getDisabledRangeKeys() {
 function listCountries() {
   const rows = db.prepare(`
     SELECT a.country_code AS raw_cc, COALESCE(a.operator,'Unknown') AS range_name, COUNT(*) AS cnt
-         , a.provider AS provider
+         , a.provider AS provider, r.service AS service
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
     WHERE a.status = 'pool' AND r.tg_enabled = 1
-    GROUP BY a.provider, a.country_code, range_name
+    GROUP BY a.provider, a.country_code, range_name, r.service
   `).all();
   const disabled = getDisabledRangeKeys();
   const agg = new Map();
   for (const r of rows) {
     if (disabled.has(`${r.provider}::${r.range_name}`)) continue;
     const cc = bestCountryCode(r.raw_cc, r.range_name) || 'XX';
-    agg.set(cc, (agg.get(cc) || 0) + r.cnt);
+    const cur = agg.get(cc) || { cnt: 0, services: new Set() };
+    cur.cnt += r.cnt;
+    if (r.service) cur.services.add(String(r.service).toLowerCase());
+    agg.set(cc, cur);
   }
   return Array.from(agg.entries())
-    .map(([code, cnt]) => ({ code, cnt }))
+    .map(([code, v]) => ({ code, cnt: v.cnt, services: Array.from(v.services) }))
     .filter(r => r.cnt > 0)
     .sort((a, b) => b.cnt - a.cnt || a.code.localeCompare(b.code));
 }
@@ -547,11 +550,16 @@ async function showCountries(ctx) {
   if (list.length === 0) {
     return ctx.replyWithHTML('😕 <b>No numbers available right now.</b>\nPlease check back in a few minutes.');
   }
-  const buttons = list.map(c => [
-    Markup.button.callback(`${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}`, `country:${c.code}`)
-  ]);
+  const buttons = list.map(c => {
+    const svcIcons = (c.services || []).slice(0, 4).map(s => serviceIcon(s)).join('');
+    const tail = svcIcons ? ` ${svcIcons}` : '';
+    return [Markup.button.callback(
+      `${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}${tail}`,
+      `country:${c.code}`
+    )];
+  });
   await ctx.replyWithHTML(
-    `<b>🌍 Available Countries</b>\nPick a country to see ranges:`,
+    `<b>🌍 Available Countries</b>\nIcons show available services: 🟦 Facebook · 🟢 WhatsApp · ✈️ Telegram · 🎵 TikTok · 📷 Instagram · 🔍 Google · 📡 Other`,
     Markup.inlineKeyboard(buttons)
   );
 }
@@ -781,9 +789,13 @@ async function showLeaderboard(ctx) {
     GROUP BY country_code ORDER BY cnt DESC LIMIT 5
   `).all(since);
   const topRanges = db.prepare(`
-    SELECT country_code, operator AS range_name, COUNT(*) cnt FROM cdr
-    WHERE status = 'billed' AND created_at >= ?
-    GROUP BY country_code, operator ORDER BY cnt DESC LIMIT 8
+    SELECT c.country_code, c.operator AS range_name, c.provider, COUNT(*) cnt,
+           (SELECT service FROM range_tg_settings r
+              WHERE r.provider = c.provider AND r.range_name = COALESCE(c.operator,'Unknown') LIMIT 1) AS service
+    FROM cdr c
+    WHERE c.status = 'billed' AND c.created_at >= ?
+    GROUP BY c.country_code, c.operator, c.provider
+    ORDER BY cnt DESC LIMIT 8
   `).all(since);
   // Total counter (real + boost combined)
   const totalRow = db.prepare(`
@@ -801,7 +813,8 @@ async function showLeaderboard(ctx) {
   txt += `\n<b>📊 Top Active Ranges</b>\n`;
   if (topRanges.length === 0) txt += '<i>No data yet</i>\n';
   else topRanges.forEach((r, i) => {
-    txt += `${i + 1}. ${flagOf(r.country_code)} ${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
+    const svc = r.service ? `${serviceIcon(r.service)} ` : '';
+    txt += `${i + 1}. ${flagOf(r.country_code)} ${svc}${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
   });
   txt += `\n<i>Tip: pick a hot range above for higher OTP delivery rates.</i>`;
   await ctx.replyWithHTML(txt);
@@ -868,8 +881,10 @@ async function postPublicOtp(c) {
   }
   const maskedNumber = maskLast4(c.phone_number);
   const otpMasked = maskLast4(c.otp);
+  const svc = c.service ? `${serviceIcon(c.service)} <b>${escapeHtml(c.service.toUpperCase())}</b>` : `${serviceIcon(null)} SMS`;
   const msg =
     `🔥 <b>New OTP Received</b>\n` +
+    `${svc}\n` +
     `📱 <code>${maskedNumber}</code>\n` +
     `🔐 <code>${otpMasked}</code>\n` +
     `${flagOf(c.country_code)} ${escapeHtml(countryName(c.country_code))} • ${serviceIcon(c.service)} ${escapeHtml(c.range_name || c.service || 'OTP')}`;
