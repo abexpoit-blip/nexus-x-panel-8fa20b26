@@ -684,13 +684,44 @@ async function scrapeOtps() {
   await ensureLoggedIn();
   if (!status.otpEndpoints) status.otpEndpoints = {};
   let total = 0;
+  const outcomes = {}; // { USD: {ok, error?, tried?}, EUR: {...} }
   for (const cur of OTP_CURRENCIES) {
     try {
-      total += await scrapeOtpsForCurrency(cur);
+      total += await scrapeOtpsForCurrency(cur, outcomes);
+      outcomes[cur] = outcomes[cur] || { ok: true };
     } catch (e) {
       if (/Session expired/.test(e.message)) throw e;
+      outcomes[cur] = { ok: false, error: e.message, tried: buildOtpEndpointCandidates(cur) };
       dwarn(`[iprn_sms-bot] ${cur} scrape failed:`, e.message);
     }
+  }
+  // Divergence alert: one currency works, the other doesn't — surface it loudly
+  const failed = OTP_CURRENCIES.filter((c) => outcomes[c] && !outcomes[c].ok);
+  const succeeded = OTP_CURRENCIES.filter((c) => outcomes[c] && outcomes[c].ok);
+  if (failed.length && succeeded.length) {
+    const prevKey = (status._lastDivergence || '');
+    const key = `${failed.join(',')}|${succeeded.join(',')}`;
+    for (const cur of failed) {
+      const o = outcomes[cur];
+      const triedList = (o.tried || []).map((u, i) => `  ${i + 1}. ${u}`).join('\n');
+      const detail = `${cur} scrape FAILED while ${succeeded.join('+')} succeeded.\nError: ${o.error}\nTried ${o.tried?.length || 0} endpoints:\n${triedList}`;
+      logEvent('error', `[ALERT] iprn_sms ${cur} OTP scrape failing (${succeeded.join('+')} ok) — ${o.error}`);
+      logOtpEvent({
+        provider: 'iprn_sms',
+        event: 'currency_divergence',
+        currency: cur,
+        endpoint: (o.tried && o.tried[0]) || null,
+        detail,
+      });
+    }
+    status._lastDivergence = key;
+    if (prevKey !== key) {
+      console.warn(`[iprn_sms-bot] ⚠ ALERT: ${failed.join(',')} failing while ${succeeded.join(',')} works`);
+    }
+  } else if (status._lastDivergence && failed.length === 0) {
+    // Recovery
+    logEvent('success', `[RECOVERY] iprn_sms all currencies (${succeeded.join('+')}) scraping ok`);
+    status._lastDivergence = '';
   }
   return total;
 }
