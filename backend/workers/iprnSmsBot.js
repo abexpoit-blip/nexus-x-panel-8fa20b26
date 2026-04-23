@@ -735,6 +735,29 @@ function findActiveAllocationByScrapedPhone(scrapedPhone) {
   return best;
 }
 
+// Fallback for FOLLOW-UP OTPs: when a number already received an OTP and
+// the upstream service (e.g. Facebook) sends a SECOND, DIFFERENT code to
+// the same number, we still want to deliver it to the same agent. We
+// match the most recent allocation (any status) for this phone within
+// the last 30 minutes. Caller MUST verify the OTP code differs from the
+// stored one before re-delivering, to avoid duplicate notifications.
+function findRecentAllocationForFollowupOtp(scrapedPhone) {
+  let best = null;
+  const cutoff = Math.floor(Date.now() / 1000) - 30 * 60;
+  const sel = db.prepare(`
+    SELECT * FROM allocations
+    WHERE provider='iprn_sms' AND phone_number=?
+      AND allocated_at >= ?
+    ORDER BY allocated_at DESC LIMIT 1
+  `);
+  for (const candidate of phoneVariants(scrapedPhone)) {
+    const row = sel.get(candidate, cutoff);
+    if (!row) continue;
+    if (!best || (row.allocated_at || 0) > (best.allocated_at || 0)) best = row;
+  }
+  return best;
+}
+
 async function scrapeOtps() {
   await ensureLoggedIn();
   if (!status.otpEndpoints) status.otpEndpoints = {};
