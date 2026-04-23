@@ -118,18 +118,19 @@ const flagOf = ccFlag;
 const COUNTRY_NAMES = CC_NAMES;
 const countryName = ccName;
 
-// Service icon
+// Service tag — short text label (FB / WA / TG …) instead of colored square emojis
+// so people instantly recognise the service in any Telegram client / language.
 function serviceIcon(svc) {
-  if (!svc) return '📡';
+  if (!svc) return '[SMS]';
   const s = String(svc).toLowerCase();
-  if (s.includes('facebook')) return '🟦';
-  if (s.includes('whatsapp')) return '🟢';
-  if (s.includes('telegram')) return '✈️';
-  if (s.includes('tiktok'))   return '🎵';
-  if (s.includes('instagram'))return '📷';
-  if (s.includes('google'))   return '🔍';
-  if (s.includes('twitter') || s.includes('x.com')) return '🐦';
-  return '📡';
+  if (s.includes('facebook'))  return '[FB]';
+  if (s.includes('whatsapp'))  return '[WA]';
+  if (s.includes('telegram'))  return '[TG]';
+  if (s.includes('tiktok'))    return '[TT]';
+  if (s.includes('instagram')) return '[IG]';
+  if (s.includes('google'))    return '[GG]';
+  if (s.includes('twitter') || s.includes('x.com')) return '[X]';
+  return '[SMS]';
 }
 
 // ---------- TG user ensure ----------
