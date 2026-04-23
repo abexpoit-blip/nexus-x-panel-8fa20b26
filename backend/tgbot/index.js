@@ -1467,6 +1467,8 @@ async function feedForwardAllOtps() {
     const me = await bot.telegram.getMe();
     BOT_USERNAME = me.username || BOT_USERNAME;
     console.log(`✓ NEXUS X tgbot launching as @${me.username} (${me.id})`);
+    const mappedFlags = Object.keys(FLAG_EMOJI_IDS).length;
+    console.log(`✓ Country flag custom emoji: ${mappedFlags} mapped (premium look) · all others render as unicode flag fallback`);
     bot.launch({ dropPendingUpdates: false });
 
     // ── Auto-resolve OTP feed channel chat_id ─────────────────────────
