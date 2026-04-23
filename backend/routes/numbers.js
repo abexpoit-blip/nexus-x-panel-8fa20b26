@@ -641,7 +641,8 @@ router.post('/ims/otp', authRequired, adminOnly, async (req, res) => {
 // =============================================================
 // Helper: when an OTP is confirmed, write CDR + credit agent
 // =============================================================
-async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null) {
+async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null, opts = {}) {
+  const allowFollowup = !!opts.allowFollowup;
   const { agent_amount } = agentPayout({
     provider: allocation.provider,
     country_code: allocation.country_code,
@@ -656,9 +657,35 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
     return false;
   }
 
+  const isIms = allocation.provider === 'ims';
+  const shortRange = (s) => {
+    if (!s) return '';
+    const parts = String(s).trim().split(/\s+/);
+    return parts[parts.length - 1] || s;
+  };
+  const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
+  const cliTag = cli ? `${cli} ` : '';
+  const prefix = label ? `[${label}] ` : '';
+
   let applied = false;
+  let followupApplied = false;
   const tx = db.transaction(() => {
-    // Update allocation (preserve existing cli if a new one isn't provided)
+    if (allowFollowup && existing.status === 'received' && String(existing.otp || '') !== String(otpCode || '')) {
+      const updateFollowup = db.prepare(`
+        UPDATE allocations
+           SET otp = ?, cli = COALESCE(?, cli), otp_received_at = strftime('%s','now')
+         WHERE id = ? AND status = 'received'
+      `).run(otpCode, cli || null, allocation.id);
+      if (updateFollowup.changes !== 1) return;
+      applied = true;
+      followupApplied = true;
+      db.prepare(`
+        INSERT INTO notifications (user_id, title, message, type)
+        VALUES (?, ?, ?, 'success')
+      `).run(allocation.user_id, 'OTP updated', `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (updated OTP)`);
+      return;
+    }
+
     const update = db.prepare(`
       UPDATE allocations SET otp = ?, cli = COALESCE(?, cli),
              status = 'received', otp_received_at = strftime('%s','now')
@@ -667,7 +694,6 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
     if (update.changes !== 1) return;
     applied = true;
 
-    // Insert CDR (with CLI tag for service identification)
     db.prepare(`
       INSERT INTO cdr (user_id, allocation_id, provider, country_code, operator, phone_number, otp_code, cli, price_bdt, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'billed')
@@ -677,32 +703,17 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
       otpCode, cli || null, agent_amount
     );
 
-    // Credit agent (only if rate card allows payout > 0)
     if (agent_amount > 0) {
       db.prepare(`UPDATE users SET balance = balance + ?, otp_count = otp_count + 1 WHERE id = ?`)
         .run(agent_amount, allocation.user_id);
-
-      // Payment record
       db.prepare(`
         INSERT INTO payments (user_id, amount_bdt, type, method, reference, note)
         VALUES (?, ?, 'credit', 'auto', ?, 'OTP commission')
       `).run(allocation.user_id, agent_amount, `otp:${allocation.id}`);
     } else {
-      // Still bump otp_count for stats, but no balance change
       db.prepare(`UPDATE users SET otp_count = otp_count + 1 WHERE id = ?`).run(allocation.user_id);
     }
 
-    // Notification — IMS shows short range code (e.g. "TF04 → 458291"),
-    // AccHub shows the full operator label. CLI/service shown when known.
-    const isIms = allocation.provider === 'ims';
-    const shortRange = (s) => {
-      if (!s) return '';
-      const parts = String(s).trim().split(/\s+/);
-      return parts[parts.length - 1] || s;
-    };
-    const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
-    const cliTag = cli ? `${cli} ` : '';
-    const prefix = label ? `[${label}] ` : '';
     const notifMsg = agent_amount > 0
       ? `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
       : `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
@@ -714,22 +725,22 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
   tx();
   if (!applied) return false;
 
-  // Best-effort audit row — agent-visible "credited" event so they can see
-  // the full lifecycle of their OTP (scrape → match → credit).
   try {
     const { logOtpEvent } = require('../lib/otpAudit');
     logOtpEvent({
       provider: allocation.provider,
-      event: 'credited',
+      event: followupApplied ? 'followup_delivered' : 'credited',
       user_id: allocation.user_id,
       allocation_id: allocation.id,
       phone_number: allocation.phone_number,
       otp_code: otpCode,
       endpoint: auditMeta?.endpoint || null,
       currency: auditMeta?.currency || null,
-      detail: agent_amount > 0
-        ? `Credited ৳${agent_amount}${cli ? ` · ${cli}` : ''}`
-        : `OTP received (no commission)${cli ? ` · ${cli}` : ''}`,
+      detail: followupApplied
+        ? `Delivered follow-up OTP${cli ? ` · ${cli}` : ''}`
+        : (agent_amount > 0
+          ? `Credited ৳${agent_amount}${cli ? ` · ${cli}` : ''}`
+          : `OTP received (no commission)${cli ? ` · ${cli}` : ''}`),
     });
   } catch (_) { /* never break delivery */ }
   return true;
