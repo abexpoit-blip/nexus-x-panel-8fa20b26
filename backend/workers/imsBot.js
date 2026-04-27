@@ -47,6 +47,10 @@ const CHROME_PATH = process.env.IMS_CHROME_PATH || undefined;
 // Heavy scrape interval — minimum 60s. The full number-list pagination on imssms.org
 // can take 30-90s with 17k+ rows, so anything lower causes ticks to overlap and deadlock.
 const INTERVAL = Math.max(60, +(process.env.IMS_SCRAPE_INTERVAL || 60));
+// Number pool reconciliation is separate from OTP polling. Keep it slow so IMS
+// CDR polling stays responsive, but make it automatic so new IMS numbers enter
+// the pool and removed upstream numbers leave our pool without manual clicks.
+const NUMBERS_INTERVAL = Math.max(300, +(process.env.IMS_NUMBERS_INTERVAL || 900));
 
 let browser = null;
 let page = null;
@@ -58,6 +62,7 @@ let loggedIn = false;
 let emptyStreak = 0;        // consecutive scrapes returning 0 numbers
 let scrapeTimer = null;     // for graceful stop
 let otpTimer = null;        // fast OTP-only poll loop (now setTimeout-based, adaptive)
+let numbersTimer = null;    // slow IMS number pool reconciliation loop
 let _scheduledStop = false; // signals adaptive _scheduleNextPoll() chain to stop
 const EMPTY_LIMIT = +(process.env.IMS_EMPTY_LIMIT || 10);
 let lastLowPoolAlertAt = 0;   // unix seconds — debounce low-pool notifications
@@ -81,6 +86,7 @@ const status = {
   consecFail: 0,
   baseUrl: '',
   intervalSec: 0,
+  numbersIntervalSec: 0,
   otpIntervalSec: 0,
 };
 
@@ -1148,6 +1154,7 @@ function start() {
   status.enabled = ENABLED;
   status.baseUrl = BASE_URL;
   status.intervalSec = INTERVAL;
+  status.numbersIntervalSec = NUMBERS_INTERVAL;
   if (!ENABLED) {
     console.log('✗ IMS bot disabled (enable from admin panel or set IMS_ENABLED=true)');
     logEvent('warn', 'Start skipped — bot disabled');
@@ -1161,6 +1168,7 @@ function start() {
   }
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
   if (otpTimer) { clearInterval(otpTimer); otpTimer = null; }
+  if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
   // Recovery: any 'claiming' rows from a crashed/restarted bulk allocation
   // should be returned to 'pool' so they can be assigned again. Safe because
   // legitimate claims flip to 'active' inside the same transaction in routes/numbers.js.
@@ -1171,12 +1179,13 @@ function start() {
   status.running = true;
   emptyStreak = 0;
   console.log(`✓ IMS bot starting (heavy tick every ${INTERVAL}s for keepalive, headless=${HEADLESS}, base=${BASE_URL})`);
-  // First tick: just login + go to CDR page (no scraping). Fast-poll handles all OTP work.
+  // First tick: login + initial pool sync. Fast-poll handles OTP work after this.
   setTimeout(async () => {
     try {
       await ensureBrowser();
       if (!loggedIn) await login();
-      console.log('[ims-bot] initial login complete — fast-poll will handle OTP scraping');
+      console.log('[ims-bot] initial login complete — running first IMS pool sync');
+      await syncLive().catch(e => console.warn('[ims-bot] initial numbers sync failed:', e.message));
     } catch (e) {
       console.error('[ims-bot] initial login failed:', e.message);
       logEvent('error', 'Initial login failed: ' + e.message);
@@ -1193,6 +1202,17 @@ function start() {
       finally { busy = false; }
     }
   }, INTERVAL * 1000);
+
+  numbersTimer = setInterval(async () => {
+    if (busy || otpBusy || !loggedIn) return;
+    try {
+      const result = await syncLive();
+      if (result.ok) console.log(`[ims-bot] periodic numbers sync: +${result.added}, -${result.removed}, kept=${result.kept}, live=${result.scraped}`);
+      else console.warn('[ims-bot] periodic numbers sync skipped:', result.error);
+    } catch (e) {
+      console.warn('[ims-bot] periodic numbers sync failed:', e.message);
+    }
+  }, NUMBERS_INTERVAL * 1000);
 
   // FAST OTP loop — adaptive interval based on burst load.
   //   • idle (0 pending allocations)        → IDLE_INTERVAL    (gentler on IMS)
@@ -1356,6 +1376,7 @@ async function stop() {
   _scheduledStop = true; // halt the adaptive setTimeout chain
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
   if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; } // setTimeout now, not setInterval
+  if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
   try { await browser?.close(); } catch (_) {}
   browser = null; page = null; loggedIn = false; _cdrPageReady = false;
   status.running = false;
