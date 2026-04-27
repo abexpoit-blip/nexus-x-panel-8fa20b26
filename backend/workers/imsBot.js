@@ -1376,6 +1376,7 @@ async function stop() {
   _scheduledStop = true; // halt the adaptive setTimeout chain
   if (scrapeTimer) { clearInterval(scrapeTimer); scrapeTimer = null; }
   if (otpTimer) { clearTimeout(otpTimer); otpTimer = null; } // setTimeout now, not setInterval
+  if (numbersTimer) { clearInterval(numbersTimer); numbersTimer = null; }
   try { await browser?.close(); } catch (_) {}
   browser = null; page = null; loggedIn = false; _cdrPageReady = false;
   status.running = false;
