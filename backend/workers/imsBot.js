@@ -98,7 +98,7 @@ function logEvent(level, message, meta) {
 }
 
 function getStatus() {
-  try {
+  return db.bestEffortRead('ims status counts', () => {
     const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='pool'").get().c;
     const claimingSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='ims' AND status='active'").get().c;
@@ -111,14 +111,14 @@ function getStatus() {
       maxRowsScraped: _maxRowsSeen,
       otpCacheSize: recentOtpCache.size,
     };
-  } catch (_) {
+  }, {
     return {
       ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
       emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
       cookieFailStreak: _cookieFailStreak, hasCookies: false,
       maxRowsScraped: _maxRowsSeen, otpCacheSize: 0,
     };
-  }
+  });
 }
 
 async function restart() {
