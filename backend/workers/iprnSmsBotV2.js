@@ -544,7 +544,7 @@ async function scrapeNumbers() {
       }
     }
   });
-  tx();
+  tx.immediate();
   status.numbersAddedTotal += added;
   if (added > 0) {
     console.log(`[iprn_sms_v2-bot] pool sync: ${added} new numbers added (${groups.length} ranges, ${totalPhones} total in ZIP)`);

@@ -1511,7 +1511,7 @@ async function syncLive() {
         }
       }
     });
-    tx();
+    tx.immediate();
 
     status.numbersScrapedTotal += nums.length;
     status.numbersAddedTotal += added;

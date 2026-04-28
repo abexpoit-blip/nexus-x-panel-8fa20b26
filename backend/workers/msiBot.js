@@ -807,7 +807,7 @@ async function syncPool() {
       if (!live.has(r.phone_number)) { del.run(r.id); removed++; }
     }
   });
-  tx();
+  tx.immediate();
   status.numbersScrapedTotal += nums.length;
   status.numbersAddedTotal += added;
   if (added || removed) logEvent('success', `Pool sync: +${added} added, -${removed} removed, ${kept} kept (${nums.length} live)`);

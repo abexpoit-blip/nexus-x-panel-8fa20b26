@@ -1241,7 +1241,7 @@ function expireOldAssignments() {
         db.prepare("UPDATE allocations SET status='expired' WHERE id = ? AND status='active'").run(e.allocation_id);
       }
     });
-    txn();
+    txn.immediate();
     console.log(`[tgbot] expired ${expired.length} unused number(s) → permanently retired (will not re-pool)`);
 
     // Auto-vanish expired numbers from the user's TG batch cards.
