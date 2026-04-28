@@ -8,16 +8,39 @@ const bcrypt = require('bcryptjs');
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '30000', 10);
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withBusyRetry(label, fn) {
+  let delay = 500;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      return fn();
+    } catch (e) {
+      if (e.code !== 'SQLITE_BUSY' || attempt === 5) throw e;
+      console.warn(`[db:init] ${label} hit SQLITE_BUSY; retrying in ${delay}ms (${attempt}/5)`);
+      sleepSync(delay);
+      delay *= 2;
+    }
+  }
+}
 
 // Ensure data directory exists
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
+db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('foreign_keys = ON');
 
 // Apply schema
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-db.exec(schema);
+withBusyRetry('schema apply', () => db.exec(schema));
 
 // --- Idempotent column-add migrations for existing databases ---
 // MUST run BEFORE tg_schema.sql so CREATE INDEX statements on new columns succeed
@@ -28,7 +51,7 @@ function addColIfMissing(table, col, ddl) {
   if (!tableExists(table)) return; // skip — schema will create with column
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === col)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+    withBusyRetry(`add column ${table}.${col}`, () => db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`));
     console.log(`✓ Migration: added ${table}.${col}`);
   }
 }
