@@ -77,7 +77,9 @@ db.bestEffortWrite = function bestEffortWrite(label, fn, timeoutMs = Number.pars
     db.pragma(`busy_timeout = ${safeTimeoutMs}`);
     return fn();
   } catch (e) {
-    console.warn(`[db] best-effort write skipped (${label}):`, e.message);
+    if (!/database is (locked|busy)/i.test(e.message || '')) {
+      console.warn(`[db] best-effort write skipped (${label}):`, e.message);
+    }
     return undefined;
   } finally {
     try { db.pragma(`busy_timeout = ${previousTimeout}`); } catch (_) {}

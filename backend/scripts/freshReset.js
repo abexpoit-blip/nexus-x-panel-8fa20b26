@@ -21,6 +21,7 @@
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const Database = require('better-sqlite3');
 
 const DB_PATH = process.env.DB_PATH
@@ -28,6 +29,41 @@ const DB_PATH = process.env.DB_PATH
   : path.resolve(__dirname, '..', 'data', 'nexus.db');
 
 const CONFIRM = process.argv.includes('--yes') || process.argv.includes('-y');
+const NO_PM2_STOP = process.argv.includes('--no-pm2-stop');
+const PM2_APPS = (process.env.FRESH_RESET_PM2_APPS || 'nexus-backend,nexus-workers,nexus-tgbot')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function pm2(action, app) {
+  try {
+    execFileSync('pm2', [action, app], { stdio: 'pipe' });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function stopPm2Apps() {
+  if (NO_PM2_STOP || PM2_APPS.length === 0) return [];
+  const stopped = [];
+  console.log(`▶ Stopping app processes before reset (${PM2_APPS.join(', ')})…`);
+  for (const app of PM2_APPS) {
+    if (pm2('stop', app)) {
+      stopped.push(app);
+      console.log(`  - stopped ${app}`);
+    }
+  }
+  return stopped;
+}
+
+function restartPm2Apps(apps) {
+  if (!apps.length) return;
+  console.log(`\n▶ Restarting app processes (${apps.join(', ')})…`);
+  for (const app of apps) {
+    if (pm2('restart', app)) console.log(`  - restarted ${app}`);
+  }
+}
 
 if (!fs.existsSync(DB_PATH)) {
   console.error(`✗ Database not found at ${DB_PATH}`);
@@ -41,14 +77,17 @@ if (!CONFIRM) {
   process.exit(0);
 }
 
+const stoppedApps = stopPm2Apps();
+
 // Backup first.
 const backupPath = `${DB_PATH}.bak-${Date.now()}`;
 fs.copyFileSync(DB_PATH, backupPath);
 console.log(`✓ Backup written: ${backupPath}`);
 
-const db = new Database(DB_PATH, { timeout: 30000 });
+const db = new Database(DB_PATH, { timeout: 60000 });
+db.pragma('busy_timeout = 60000');
 db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 30000');
+db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = OFF'); // we're truncating multiple FK-linked tables
 
 function tableExists(name) {
@@ -132,12 +171,17 @@ const tx = db.transaction(() => {
   }
 });
 
-tx();
+try {
+  tx.immediate();
 
-console.log('\n▶ VACUUM…');
-db.exec('VACUUM');
+  console.log('\n▶ Checkpoint + VACUUM…');
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
+  db.exec('VACUUM');
 
-db.pragma('foreign_keys = ON');
-console.log('\n✅ Fresh reset complete.');
-console.log(`   Backup at: ${backupPath}`);
-db.close();
+  db.pragma('foreign_keys = ON');
+  console.log('\n✅ Fresh reset complete.');
+  console.log(`   Backup at: ${backupPath}`);
+} finally {
+  db.close();
+  restartPm2Apps(stoppedApps);
+}
