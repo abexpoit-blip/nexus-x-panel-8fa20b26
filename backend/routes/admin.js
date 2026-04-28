@@ -17,10 +17,24 @@ router.use(authRequired, adminOnly);
 // Puppeteer or upstream panel scraping work.
 const WORKERS_IN_API = String(process.env.RUN_WORKERS_IN_API || 'false').toLowerCase() !== 'false';
 const BOT_RUNTIME_RE = /^\/(ims|msi|numpanel|seven1tel|iprn-sms|iprn-sms-v2)-(status|restart|start|stop|scrape-now|sync-live|scrape-numbers|numbers-job)$/;
+const WORKER_MODULE_TO_ID = {
+  '../workers/imsBot': 'ims',
+  '../workers/msiBot': 'msi',
+  '../workers/numpanelBot': 'numpanel',
+  '../workers/seven1telBot': 'seven1tel',
+  '../workers/iprnSmsBot': 'iprn-sms',
+  '../workers/iprnSmsBotV2': 'iprn-sms-v2',
+};
 function shouldProxyToWorkers(req) {
   if (WORKERS_IN_API) return false;
   if (BOT_RUNTIME_RE.test(req.path)) return true;
   return req.path === '/autopool' || req.path.startsWith('/autopool/');
+}
+async function restartWorkerBot(modulePath) {
+  if (WORKERS_IN_API) return require(modulePath).restart();
+  const botId = WORKER_MODULE_TO_ID[modulePath];
+  if (!botId) return null;
+  return workerControl.request(`/${botId}-restart`, { method: 'POST' });
 }
 router.use(async (req, res, next) => {
   if (!shouldProxyToWorkers(req)) return next();
