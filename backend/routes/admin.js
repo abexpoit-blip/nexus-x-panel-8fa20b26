@@ -6,9 +6,38 @@ const {
   signImpersonationToken, recordSession, setAuthCookie,
 } = require('../middleware/auth');
 const { logFromReq } = require('../lib/audit');
+const workerControl = require('../lib/workerControl');
 
 const router = express.Router();
 router.use(authRequired, adminOnly);
+
+// Runtime bot actions live in the worker process when RUN_WORKERS_IN_API=false.
+// Keep DB/config admin routes in this API process, but proxy status/start/stop/
+// scrape/autopool calls so login and normal API requests cannot be frozen by
+// Puppeteer or upstream panel scraping work.
+const WORKERS_IN_API = String(process.env.RUN_WORKERS_IN_API || 'false').toLowerCase() !== 'false';
+const BOT_RUNTIME_RE = /^\/(ims|msi|numpanel|seven1tel|iprn-sms|iprn-sms-v2)-(status|restart|start|stop|scrape-now|sync-live|scrape-numbers|numbers-job)$/;
+function shouldProxyToWorkers(req) {
+  if (WORKERS_IN_API) return false;
+  if (BOT_RUNTIME_RE.test(req.path)) return true;
+  return req.path === '/autopool' || req.path.startsWith('/autopool/');
+}
+router.use(async (req, res, next) => {
+  if (!shouldProxyToWorkers(req)) return next();
+  try {
+    const data = await workerControl.request(req.path, {
+      method: req.method,
+      body: ['POST', 'PUT', 'PATCH'].includes(req.method) ? (req.body || {}) : undefined,
+    });
+    return res.json(data);
+  } catch (e) {
+    const status = e.status || (e.code === 'ECONNREFUSED' ? 503 : 502);
+    return res.status(status).json({
+      error: 'Worker process is not responding. Run deploy.sh to start nexus-workers.',
+      detail: e.message,
+    });
+  }
+});
 
 // POST /api/admin/login-as/:id — admin starts impersonation
 router.post('/login-as/:id', (req, res) => {
