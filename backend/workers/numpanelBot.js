@@ -181,7 +181,7 @@ function logEvent(level, message, meta) {
 }
 
 function getStatus() {
-  try {
+  return db.bestEffortRead('numpanel status counts', () => {
     const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='pool'").get().c;
     const claimingSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='active'").get().c;
@@ -194,13 +194,11 @@ function getStatus() {
       emptyStreak, emptyLimit: EMPTY_LIMIT,
       cookieFailStreak: _cookieFailStreak, hasCookies,
     };
-  } catch (_) {
-    return {
-      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
-      events: events.slice(), otpCacheSize: 0, emptyStreak, emptyLimit: EMPTY_LIMIT,
-      cookieFailStreak: _cookieFailStreak, hasCookies: false,
-    };
-  }
+  }, {
+    ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+    events: events.slice(), otpCacheSize: 0, emptyStreak, emptyLimit: EMPTY_LIMIT,
+    cookieFailStreak: _cookieFailStreak, hasCookies: false,
+  });
 }
 
 // ---- Math captcha solver (same as IMS) ----
