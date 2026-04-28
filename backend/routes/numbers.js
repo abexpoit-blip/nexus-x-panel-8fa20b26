@@ -782,6 +782,20 @@ router.get('/otp-audit', authRequired, (req, res) => {
     LIMIT ?
   `).all(...params, limit);
 
+  // Privacy hardening: agents must NEVER see internal scraper URLs / query
+  // params (those expose IPRN endpoints, DataTables column maps, currency
+  // ids, date ranges, etc.). Strip the endpoint + raw detail from agent rows
+  // and only keep the minimum needed for the lifecycle panel. Admins keep
+  // full visibility for debugging.
+  const safeRows = isAdmin
+    ? rows
+    : rows.map((r) => ({
+        ...r,
+        endpoint: null,
+        // Detail can contain raw upstream payload fragments — hide for agents.
+        detail: r.event === 'credited' || r.event === 'matched' ? r.detail : null,
+      }));
+
   // Stats over the last 24h (audit-page header)
   const since = Math.floor(Date.now() / 1000) - 86400;
   const stat = (event) => {
@@ -795,7 +809,7 @@ router.get('/otp-audit', authRequired, (req, res) => {
   };
 
   res.json({
-    rows,
+    rows: safeRows,
     stats_24h: {
       scrapes:   stat('scrape_ok'),
       failures:  stat('scrape_fail'),
