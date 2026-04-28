@@ -297,7 +297,7 @@ router.post('/get', authRequired, async (req, res) => {
         allocated.push({ id, phone_number: r.phone_number, operator: r.operator, otp: null, status: 'active' });
       }
     });
-    writeAll();
+    writeAll.immediate();
 
     logFromReq(req, 'allocation', { meta: { provider: effectiveProviderId, requested_via: providerId, count: allocated.length, errors: errors.length, errorDetails: errors.slice(0, 3) } });
     res.json({ allocated, errors });
@@ -540,7 +540,7 @@ router.post('/ims/pool', authRequired, adminOnly, (req, res) => {
       added++;
     }
   });
-  tx(numbers);
+  tx.immediate(numbers);
   logFromReq(req, 'ims_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
   res.json({ added, skipped, invalid, range: rangeName });
 });
@@ -581,7 +581,7 @@ router.post('/msi/pool', authRequired, adminOnly, (req, res) => {
       added++;
     }
   });
-  tx(numbers);
+  tx.immediate(numbers);
   logFromReq(req, 'msi_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
   res.json({ added, skipped, invalid, range: rangeName });
 });
@@ -618,7 +618,7 @@ router.post('/seven1tel/pool', authRequired, adminOnly, (req, res) => {
       added++;
     }
   });
-  tx(numbers);
+  tx.immediate(numbers);
   logFromReq(req, 'seven1tel_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
   res.json({ added, skipped, invalid, range: rangeName });
 });
@@ -722,7 +722,7 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
       VALUES (?, ?, ?, 'success')
     `).run(allocation.user_id, 'OTP received', notifMsg);
   });
-  tx();
+  tx.immediate();
   if (!applied) return false;
 
   try {
