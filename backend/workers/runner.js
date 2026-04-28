@@ -1,7 +1,5 @@
 require('dotenv').config();
 
-require('../db/init');
-
 console.log('🚀 NexusX workers starting');
 require('./index').startAll();
 require('./controlServer').start();
