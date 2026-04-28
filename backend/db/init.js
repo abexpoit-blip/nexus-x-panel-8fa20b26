@@ -8,16 +8,39 @@ const bcrypt = require('bcryptjs');
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '30000', 10);
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withBusyRetry(label, fn) {
+  let delay = 500;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      return fn();
+    } catch (e) {
+      if (e.code !== 'SQLITE_BUSY' || attempt === 5) throw e;
+      console.warn(`[db:init] ${label} hit SQLITE_BUSY; retrying in ${delay}ms (${attempt}/5)`);
+      sleepSync(delay);
+      delay *= 2;
+    }
+  }
+}
 
 // Ensure data directory exists
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
+db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('foreign_keys = ON');
 
 // Apply schema
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-db.exec(schema);
+withBusyRetry('schema apply', () => db.exec(schema));
 
 // --- Idempotent column-add migrations for existing databases ---
 // MUST run BEFORE tg_schema.sql so CREATE INDEX statements on new columns succeed
@@ -28,7 +51,7 @@ function addColIfMissing(table, col, ddl) {
   if (!tableExists(table)) return; // skip — schema will create with column
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === col)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+    withBusyRetry(`add column ${table}.${col}`, () => db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`));
     console.log(`✓ Migration: added ${table}.${col}`);
   }
 }
@@ -41,7 +64,7 @@ addColIfMissing('cdr', 'note', 'TEXT');
 addColIfMissing('tg_assignments', 'batch_id', 'TEXT');
 
 // NumPanel range customization metadata
-db.exec(`
+withBusyRetry('numpanel_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS numpanel_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -51,12 +74,12 @@ db.exec(`
     notes TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('numpanel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('numpanel_range_meta', 'service_tag', 'TEXT'); // facebook|whatsapp|telegram|other
 
 // IMS range metadata (mirror of numpanel)
-db.exec(`
+withBusyRetry('ims_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS ims_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -68,12 +91,12 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('ims_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('ims_range_meta', 'service_tag', 'TEXT');
 
 // MSI range metadata (mirror of numpanel)
-db.exec(`
+withBusyRetry('msi_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS msi_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -85,12 +108,12 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('msi_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('msi_range_meta', 'service_tag', 'TEXT');
 
 // Seven1Tel range metadata (mirror of msi — same /ints panel software)
-db.exec(`
+withBusyRetry('seven1tel_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS seven1tel_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -102,7 +125,7 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('seven1tel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('seven1tel_range_meta', 'service_tag', 'TEXT');
 
@@ -110,7 +133,7 @@ addColIfMissing('seven1tel_range_meta', 'service_tag', 'TEXT');
 // agents can SEE when their OTPs were scraped, matched, and credited (with the
 // upstream endpoint URL and currency filter used). Helps debugging "why didn't
 // I get my OTP" complaints — agents can see whether the bot is even polling.
-db.exec(`
+withBusyRetry('otp_audit_log schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS otp_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL DEFAULT (strftime('%s','now')),
@@ -126,15 +149,15 @@ db.exec(`
     currency TEXT,                           -- filter applied (USD / EUR / GBP)
     detail TEXT                              -- short human-readable note / error msg
   );
-`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_ts ON otp_audit_log(ts DESC);`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_user ON otp_audit_log(user_id, ts DESC);`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_provider ON otp_audit_log(provider, ts DESC);`);
+`));
+withBusyRetry('otp audit indexes', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_ts ON otp_audit_log(ts DESC);`));
+withBusyRetry('otp audit user index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_user ON otp_audit_log(user_id, ts DESC);`));
+withBusyRetry('otp audit provider index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_provider ON otp_audit_log(provider, ts DESC);`));
 
 // Apply Telegram bot schema (additive) AFTER column migrations
 const tgSchemaPath = path.join(__dirname, 'tg_schema.sql');
 if (fs.existsSync(tgSchemaPath)) {
-  db.exec(fs.readFileSync(tgSchemaPath, 'utf8'));
+  withBusyRetry('tg schema apply', () => db.exec(fs.readFileSync(tgSchemaPath, 'utf8')));
   console.log('✓ TG schema applied');
 }
 
@@ -142,10 +165,10 @@ if (fs.existsSync(tgSchemaPath)) {
 const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
 if (adminExists.c === 0) {
   const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-  db.prepare(`
+  withBusyRetry('seed admin', () => db.prepare(`
     INSERT INTO users (username, password_hash, role, full_name, balance)
     VALUES (?, ?, 'admin', 'System Admin', 0)
-  `).run(ADMIN_USERNAME, hash);
+  `).run(ADMIN_USERNAME, hash));
   console.log(`✓ Default admin created: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
   console.log('  IMPORTANT: Change this password immediately in production!');
 }
