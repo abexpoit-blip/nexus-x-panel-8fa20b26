@@ -31,7 +31,7 @@ function signToken(user) {
 
 function recordSession(userId, token, req) {
   const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
-  try {
+  db.bestEffortWrite('record session', () => {
     db.prepare(`
       INSERT INTO sessions (user_id, token_hash, ip, user_agent, expires_at)
       VALUES (?, ?, ?, ?, ?)
@@ -42,9 +42,7 @@ function recordSession(userId, token, req) {
         expires_at = excluded.expires_at,
         last_seen_at = strftime('%s','now')
     `).run(userId, hashToken(token), req.ip || null, req.headers['user-agent'] || null, expiresAt);
-  } catch (e) {
-    console.warn('[auth] recordSession failed:', e.message);
-  }
+  });
 }
 
 // Cookie name used for httpOnly JWT
@@ -92,8 +90,10 @@ function authRequired(req, res, next) {
     if (payload.act) req.impersonator = payload.act; // { id, username }
 
     // Update session last_seen (best effort)
-    db.prepare("UPDATE sessions SET last_seen_at = strftime('%s','now') WHERE token_hash = ?")
-      .run(hashToken(token));
+    db.bestEffortWrite('touch session', () => {
+      db.prepare("UPDATE sessions SET last_seen_at = strftime('%s','now') WHERE token_hash = ?")
+        .run(hashToken(token));
+    }, 250);
 
     next();
   } catch (e) {
