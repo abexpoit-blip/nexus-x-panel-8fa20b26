@@ -2,19 +2,23 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { withSqliteBusyRetry } = require('./sqliteRetry');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
-const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '30000', 10);
+const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '60000', 10);
 
 // Auto-create data dir
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-const db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-db.pragma('synchronous = NORMAL');
+const withBusyRetry = (label, fn, options) => withSqliteBusyRetry(`db ${label}`, fn, { attempts: 8, maxDelayMs: 10000, ...options });
+const db = withBusyRetry('open database', () => new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS }));
+withBusyRetry('configure pragmas', () => {
+  db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('synchronous = NORMAL');
+});
 
 function _tableExists(table) {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table);
@@ -27,7 +31,7 @@ function _ensureCol(table, col, ddl) {
     if (!_tableExists(table)) return;
     const cols = db.prepare(`PRAGMA table_info(${table})`).all();
     if (!cols.some((c) => c.name === col)) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+      withBusyRetry(`auto-migrate ${table}.${col}`, () => db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`));
       console.log(`[db] auto-migrated ${table}.${col}`);
     }
   } catch (e) {
@@ -38,7 +42,7 @@ function _ensureCol(table, col, ddl) {
 function _ensureIndex(table, name, sql) {
   try {
     if (!_tableExists(table)) return;
-    db.exec(sql);
+    withBusyRetry(`ensure index ${name}`, () => db.exec(sql));
   } catch (e) {
     console.error(`[db] ensure index ${name} failed:`, e.message);
   }
