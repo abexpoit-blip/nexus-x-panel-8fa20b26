@@ -4,39 +4,25 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
+const { withSqliteBusyRetry } = require('../lib/sqliteRetry');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '30000', 10);
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function withBusyRetry(label, fn) {
-  let delay = 500;
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      return fn();
-    } catch (e) {
-      if (e.code !== 'SQLITE_BUSY' || attempt === 5) throw e;
-      console.warn(`[db:init] ${label} hit SQLITE_BUSY; retrying in ${delay}ms (${attempt}/5)`);
-      sleepSync(delay);
-      delay *= 2;
-    }
-  }
-}
+const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '60000', 10);
+const withBusyRetry = (label, fn) => withSqliteBusyRetry(`db:init ${label}`, fn, { attempts: 8, maxDelayMs: 10000 });
 
 // Ensure data directory exists
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-const db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
-db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
-db.pragma('foreign_keys = ON');
+const db = withBusyRetry('open database', () => new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS }));
+withBusyRetry('configure pragmas', () => {
+  db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('foreign_keys = ON');
+});
 
 // Apply schema
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
@@ -162,7 +148,7 @@ if (fs.existsSync(tgSchemaPath)) {
 }
 
 // Seed default admin (only if no admin exists)
-const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
+const adminExists = withBusyRetry('check admin seed', () => db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get());
 if (adminExists.c === 0) {
   const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
   withBusyRetry('seed admin', () => db.prepare(`
