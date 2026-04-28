@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Settings, CheckCircle, XCircle, Wifi, Server, Wallet, AlertTriangle,
-  Eye, EyeOff, Save, Loader2, KeyRound, Power, EyeOff as Hidden,
+  Eye, EyeOff, Save, Loader2, KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GradientMesh, PageHeader } from "@/components/premium";
@@ -77,52 +77,31 @@ function ProviderCard({
   onToggleEdit: () => void;
   onChanged: () => void;
 }) {
-  const { toast } = useToast();
-  const [toggling, setToggling] = useState(false);
   const editable = p.id === "acchub" || p.id === "ims";
   const hasError = !!p.lastError;
-  const togglable = p.togglable !== false && p.id !== "acchub";
-  const isOff = togglable && p.enabled === false;
-  const isLive = p.configured && !hasError && !isOff;
-
-  const handleToggle = async (next: boolean) => {
-    setToggling(true);
-    try {
-      await api.admin.providerToggle(p.id, next);
-      toast({
-        title: next ? "✓ Provider enabled" : "Provider disabled",
-        description: next
-          ? `${p.name} bot started — agents can now request numbers from this server.`
-          : `${p.name} bot stopped and hidden from agents (data preserved).`,
-      });
-      onChanged();
-    } catch (e) {
-      toast({ title: "Toggle failed", description: (e as Error).message, variant: "destructive" });
-    } finally { setToggling(false); }
-  };
+  const isLive = p.configured && !hasError;
 
   return (
-    <GlassCard className={cn("!p-5 transition-opacity", isOff && "opacity-70")}>
+    <GlassCard className="!p-5">
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="flex items-start gap-3">
           <div className={cn(
             "w-10 h-10 rounded-lg flex items-center justify-center",
-            isOff ? "bg-muted/30" : isLive ? "bg-neon-green/15" : hasError ? "bg-destructive/15" : "bg-muted/30"
+            isLive ? "bg-neon-green/15" : hasError ? "bg-destructive/15" : "bg-muted/30"
           )}>
             <Server className={cn("w-5 h-5",
-              isOff ? "text-muted-foreground" : isLive ? "text-neon-green" : hasError ? "text-destructive" : "text-muted-foreground")} />
+              isLive ? "text-neon-green" : hasError ? "text-destructive" : "text-muted-foreground")} />
           </div>
           <div>
             <h3 className="font-display font-semibold text-foreground flex items-center gap-2">
               {p.name}
               <span className={cn(
                 "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-                isOff ? "bg-muted/30 text-muted-foreground" :
                 hasError ? "bg-destructive/15 text-destructive" :
                 isLive ? "bg-neon-green/15 text-neon-green" : "bg-muted/30 text-muted-foreground"
               )}>
-                {isOff ? <Hidden className="w-3 h-3" /> : hasError ? <XCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
-                {isOff ? "Off · Hidden from agents" : hasError ? "Error" : isLive ? "Live" : "Not configured"}
+                {hasError ? <XCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
+                {hasError ? "Error" : isLive ? "Live" : "Not configured"}
               </span>
             </h3>
             <div className="text-xs text-muted-foreground space-y-0.5 mt-1">
@@ -133,19 +112,6 @@ function ProviderCard({
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          {togglable && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/[0.08] bg-white/[0.02]">
-              <Power className={cn("w-3.5 h-3.5", p.enabled ? "text-neon-green" : "text-muted-foreground")} />
-              <span className={cn("text-[10px] font-bold uppercase tracking-wider", p.enabled ? "text-neon-green" : "text-muted-foreground")}>
-                {toggling ? "..." : p.enabled ? "ON" : "OFF"}
-              </span>
-              <Switch
-                checked={!!p.enabled}
-                disabled={toggling}
-                onCheckedChange={handleToggle}
-              />
-            </div>
-          )}
           {p.balance !== null && p.balance !== undefined && (
             <div className="flex items-center gap-1.5 text-sm font-mono font-bold text-neon-green">
               <Wallet className="w-4 h-4" />
@@ -166,14 +132,6 @@ function ProviderCard({
           )}
         </div>
       </div>
-
-      {isOff && (
-        <div className="mb-3 p-3 rounded-lg bg-muted/20 border border-white/[0.06] text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground/80">Soft OFF:</span>{" "}
-          Bot is stopped and this server is hidden from agents in <span className="font-mono">Get Number</span>.
-          Pool data, range settings, and rates are preserved — flip ON anytime to resume.
-        </div>
-      )}
 
       {hasError && (
         <div className="flex items-start gap-2 mb-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">

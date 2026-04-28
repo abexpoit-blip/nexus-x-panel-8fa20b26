@@ -181,7 +181,7 @@ function logEvent(level, message, meta) {
 }
 
 function getStatus() {
-  return db.bestEffortRead('numpanel status counts', () => {
+  try {
     const poolSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='pool'").get().c;
     const claimingSize = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='numpanel' AND status='active'").get().c;
@@ -194,11 +194,13 @@ function getStatus() {
       emptyStreak, emptyLimit: EMPTY_LIMIT,
       cookieFailStreak: _cookieFailStreak, hasCookies,
     };
-  }, {
-    ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
-    events: events.slice(), otpCacheSize: 0, emptyStreak, emptyLimit: EMPTY_LIMIT,
-    cookieFailStreak: _cookieFailStreak, hasCookies: false,
-  });
+  } catch (_) {
+    return {
+      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+      events: events.slice(), otpCacheSize: 0, emptyStreak, emptyLimit: EMPTY_LIMIT,
+      cookieFailStreak: _cookieFailStreak, hasCookies: false,
+    };
+  }
 }
 
 // ---- Math captcha solver (same as IMS) ----
@@ -911,10 +913,7 @@ async function syncPool() {
   const sysUser = ensurePoolUser();
   let added = 0, removed = 0, kept = 0;
 
-  // Dedup against EVERY status (pool/claiming/active/received/used/released/
-  // expired). Without this, a previously-assigned number could re-enter the
-  // pool on the next scrape and be handed out to a SECOND agent.
-  const exists = db.prepare("SELECT 1 FROM allocations WHERE provider='numpanel' AND phone_number=? LIMIT 1");
+  const exists = db.prepare("SELECT 1 FROM allocations WHERE provider='numpanel' AND phone_number=? AND status IN ('pool','active','claiming') LIMIT 1");
   const ins = db.prepare(`
     INSERT INTO allocations (user_id, provider, phone_number, country_code, operator, status, allocated_at)
     VALUES (?, 'numpanel', ?, ?, ?, 'pool', strftime('%s','now'))
@@ -932,7 +931,7 @@ async function syncPool() {
       if (!live.has(r.phone_number)) { del.run(r.id); removed++; }
     }
   });
-  tx.immediate();
+  tx();
   status.numbersScrapedTotal += nums.length;
   status.numbersAddedTotal += added;
   if (added || removed) logEvent('success', `Pool sync: +${added} added, -${removed} removed, ${kept} kept (${nums.length} live)`);

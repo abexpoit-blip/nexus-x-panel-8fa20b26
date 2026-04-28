@@ -6,65 +6,9 @@ const {
   signImpersonationToken, recordSession, setAuthCookie,
 } = require('../middleware/auth');
 const { logFromReq } = require('../lib/audit');
-const workerControl = require('../lib/workerControl');
 
 const router = express.Router();
 router.use(authRequired, adminOnly);
-
-// Runtime bot actions live in the worker process when RUN_WORKERS_IN_API=false.
-// Keep DB/config admin routes in this API process, but proxy status/start/stop/
-// scrape/autopool calls so login and normal API requests cannot be frozen by
-// Puppeteer or upstream panel scraping work.
-const WORKERS_IN_API = String(process.env.RUN_WORKERS_IN_API || 'false').toLowerCase() !== 'false';
-const BOT_RUNTIME_RE = /^\/(ims|msi|numpanel|seven1tel|iprn-sms|iprn-sms-v2)-(status|restart|start|stop|scrape-now|sync-live|scrape-numbers|numbers-job)$/;
-const WORKER_MODULE_TO_ID = {
-  '../workers/imsBot': 'ims',
-  '../workers/msiBot': 'msi',
-  '../workers/numpanelBot': 'numpanel',
-  '../workers/seven1telBot': 'seven1tel',
-  '../workers/iprnSmsBot': 'iprn-sms',
-  '../workers/iprnSmsBotV2': 'iprn-sms-v2',
-};
-function shouldProxyToWorkers(req) {
-  if (WORKERS_IN_API) return false;
-  if (BOT_RUNTIME_RE.test(req.path)) return true;
-  return req.path === '/autopool' || req.path.startsWith('/autopool/');
-}
-async function restartWorkerBot(modulePath) {
-  if (WORKERS_IN_API) return require(modulePath).restart();
-  const botId = WORKER_MODULE_TO_ID[modulePath];
-  if (!botId) return null;
-  return workerControl.request(`/${botId}-restart`, { method: 'POST' });
-}
-router.use(async (req, res, next) => {
-  if (!shouldProxyToWorkers(req)) return next();
-  try {
-    const data = await workerControl.request(req.path, {
-      method: req.method,
-      body: ['POST', 'PUT', 'PATCH'].includes(req.method) ? (req.body || {}) : undefined,
-    });
-    return res.json(data);
-  } catch (e) {
-    // For READ-only status/job polls we never want to break the admin UI —
-    // return a 200 with a stub status so the page renders its controls and a
-    // "worker busy / offline" indicator instead of being stuck on "Loading…".
-    const isStatusRead =
-      req.method === 'GET' &&
-      (/-(status|numbers-job)$/.test(req.path) || req.path === '/autopool' || /^\/autopool\/[^/]+$/.test(req.path));
-    if (isStatusRead) {
-      return res.json({
-        status: null,
-        workerOffline: true,
-        workerError: e.message,
-      });
-    }
-    const status = e.status || (e.code === 'ECONNREFUSED' ? 503 : 502);
-    return res.status(status).json({
-      error: 'Worker process is not responding. Run deploy.sh to start nexus-workers.',
-      detail: e.message,
-    });
-  }
-});
 
 // POST /api/admin/login-as/:id — admin starts impersonation
 router.post('/login-as/:id', (req, res) => {
@@ -347,86 +291,6 @@ router.get('/allocations', (req, res) => {
   res.json({ allocations });
 });
 
-// GET /api/admin/pool-inspector — debug view of the unified-pool aggregation.
-// For each Country → Range bucket the agents see, list every bot contributing
-// to it (with its individual count) and the inferred country name. This is
-// the admin's "ground truth" for diagnosing odd allocations or missing
-// country labels.
-router.get('/pool-inspector', async (req, res) => {
-  try {
-    const providers = require('../providers');
-    const { bestCountryCode, countryName: cnFromCC } = require('../lib/countryInfer');
-    const POOL_LABELS = {
-      ims: 'Server B', msi: 'Server C', numpanel: 'Server D',
-      iprn: 'Server E', iprn_sms: 'Server F', seven1tel: 'Server G',
-      iprn_sms_v2: 'Server F2',
-    };
-    const isEnabled = (id) => {
-      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
-      const raw = row?.value ?? process.env[`${id.toUpperCase()}_ENABLED`] ?? 'false';
-      return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
-    };
-    // country_code -> { country_code, country_name, total, ranges: Map<rangeName, {range, total, bots: [{provider,label,count}]}> }
-    const byCountry = new Map();
-    for (const pid of Object.keys(POOL_LABELS)) {
-      if (!isEnabled(pid)) continue;
-      let p; try { p = providers.get(pid); } catch (_) { continue; }
-      let ranges = []; try { ranges = await p.listRanges(); } catch (_) { continue; }
-      for (const r of ranges || []) {
-        if (!r || !r.name || !r.count) continue;
-        let cc = null;
-        try {
-          const row = db.prepare(
-            "SELECT country_code FROM allocations WHERE provider=? AND status='pool' AND COALESCE(operator,'Unknown')=? AND country_code IS NOT NULL LIMIT 1"
-          ).get(pid, r.name);
-          cc = row?.country_code || null;
-        } catch (_) {}
-        const inferred = !cc;
-        if (!cc) cc = bestCountryCode(null, r.name);
-        const ccKey = cc || 'ZZ';
-        let cn = null;
-        if (cc) {
-          try {
-            const row = db.prepare(
-              "SELECT country_name FROM rates WHERE provider=? AND country_code=? AND country_name IS NOT NULL LIMIT 1"
-            ).get(pid, cc);
-            cn = row?.country_name || null;
-          } catch (_) {}
-          if (!cn) cn = cnFromCC(cc);
-        }
-        if (!byCountry.has(ccKey)) {
-          byCountry.set(ccKey, {
-            country_code: ccKey,
-            country_name: cn || (ccKey === 'ZZ' ? 'Unknown' : ccKey),
-            inferred,
-            total: 0,
-            ranges: new Map(),
-          });
-        }
-        const cBucket = byCountry.get(ccKey);
-        if (cn && !cBucket.country_name_locked) cBucket.country_name = cn;
-        cBucket.total += r.count;
-        if (!cBucket.ranges.has(r.name)) {
-          cBucket.ranges.set(r.name, { range: r.name, total: 0, bots: [] });
-        }
-        const rBucket = cBucket.ranges.get(r.name);
-        rBucket.total += r.count;
-        rBucket.bots.push({ provider: pid, label: POOL_LABELS[pid], count: r.count });
-      }
-    }
-    const countries = Array.from(byCountry.values())
-      .map((c) => ({
-        country_code: c.country_code,
-        country_name: c.country_name,
-        inferred: c.inferred,
-        total: c.total,
-        ranges: Array.from(c.ranges.values()).sort((a, b) => b.total - a.total),
-      }))
-      .sort((a, b) => b.total - a.total);
-    res.json({ countries });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // GET /api/admin/commission-trend — daily commission credited to agents
 router.get('/commission-trend', (req, res) => {
   const days = Math.min(Math.max(+req.query.days || 14, 1), 60);
@@ -617,12 +481,10 @@ router.post('/ims-pool-cleanup', (req, res) => {
     }
 
     logFromReq(req, 'ims_pool_cleanup', { meta: { mode, hours, range, removed: result.changes } });
-    if (WORKERS_IN_API) {
-      try {
-        const bot = require('../workers/imsBot');
-        bot.logEvent && bot.logEvent('warn', description);
-      } catch (_) {}
-    }
+    try {
+      const bot = require('../workers/imsBot');
+      bot.logEvent && bot.logEvent('warn', description);
+    } catch (_) {}
 
     res.json({ ok: true, removed: result.changes, description });
   } catch (e) {
@@ -666,8 +528,13 @@ router.put('/ims-credentials', async (req, res) => {
     logFromReq(req, 'ims_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
 
     // Hot-restart bot so new credentials take effect immediately
-    try { await restartWorkerBot('../workers/imsBot'); }
-    catch (e) { console.warn('ims-credentials: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Credentials updated by admin — bot restarting');
+    } catch (e) {
+      console.warn('ims-credentials: restart failed:', e.message);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -701,8 +568,13 @@ router.put('/ims-cookies', async (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
     `).run(cookies.trim());
     logFromReq(req, 'ims_cookies_updated', { meta: { length: cookies.length } });
-    try { await restartWorkerBot('../workers/imsBot'); }
-    catch (e) { console.warn('ims-cookies: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Session cookies updated by admin — bot restarting');
+    } catch (e) {
+      console.warn('ims-cookies: restart failed:', e.message);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -714,7 +586,10 @@ router.delete('/ims-cookies', async (req, res) => {
   try {
     db.prepare("DELETE FROM settings WHERE key = 'ims_cookies'").run();
     logFromReq(req, 'ims_cookies_cleared', {});
-    try { await restartWorkerBot('../workers/imsBot'); } catch (_) {}
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+    } catch (_) {}
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -748,8 +623,11 @@ router.put('/ims-otp-interval', async (req, res) => {
     `).run(String(interval));
     logFromReq(req, 'ims_otp_interval_updated', { meta: { interval_sec: interval } });
     // Restart bot so new interval takes effect immediately
-    try { await restartWorkerBot('../workers/imsBot'); }
-    catch (e) { console.warn('ims-otp-interval restart:', e.message); }
+    try {
+      const bot = require('../workers/imsBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', `OTP poll interval changed to ${interval}s by admin`);
+    } catch (e) { console.warn('ims-otp-interval restart:', e.message); }
     res.json({ ok: true, interval_sec: interval });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -760,86 +638,17 @@ router.put('/ims-otp-interval', async (req, res) => {
 router.get('/provider-status', async (req, res) => {
   try {
     const providers = require('../providers');
-    // Helper: read enabled flag from settings/env (mirrors /api/numbers/providers logic)
-    const readEnabled = (id) => {
-      if (id === 'acchub') return true; // acchub has no toggle (API only)
-      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
-      const dbVal = row?.value;
-      const envVal = process.env[`${id.toUpperCase()}_ENABLED`];
-      const raw = dbVal ?? envVal ?? 'false';
-      return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
-    };
     const out = [];
     for (const meta of providers.list()) {
       const p = providers.get(meta.id);
-      const enabled = readEnabled(meta.id);
-      const togglable = meta.id !== 'acchub';
       if (typeof p.getStatus === 'function') {
-        try {
-          const s = await p.getStatus();
-          out.push({ ...s, enabled, togglable });
-        }
-        catch (e) { out.push({ id: meta.id, name: meta.name, configured: false, lastError: e.message, enabled, togglable }); }
+        try { out.push(await p.getStatus()); }
+        catch (e) { out.push({ id: meta.id, name: meta.name, configured: false, lastError: e.message }); }
       } else {
-        out.push({ id: meta.id, name: meta.name, configured: true, lastError: null, enabled, togglable });
+        out.push({ id: meta.id, name: meta.name, configured: true, lastError: null });
       }
     }
     res.json({ providers: out });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// PUT /api/admin/provider-toggle — Soft ON/OFF toggle for any provider.
-// Body: { id: 'msi'|'numpanel'|'ims'|'iprn_sms'|'iprn_sms_v2'|'seven1tel', enabled: boolean }
-// - flips <id>_enabled in settings (overrides .env)
-// - calls bot.start() / bot.stop() so the change takes effect immediately
-// - data (allocations, rates, range_meta) is preserved → "soft" disable
-router.put('/provider-toggle', async (req, res) => {
-  try {
-    const { id, enabled } = req.body || {};
-    const validIds = ['msi', 'iprn_sms', 'iprn_sms_v2', 'numpanel', 'ims', 'seven1tel'];
-    if (!validIds.includes(id)) {
-      return res.status(400).json({ error: `id must be one of: ${validIds.join(', ')}` });
-    }
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled (boolean) required' });
-    }
-
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
-    `).run(`${id}_enabled`, enabled ? 'true' : 'false');
-
-    const botFile =
-      id === 'iprn_sms' ? 'iprnSmsBot' :
-      id === 'iprn_sms_v2' ? 'iprnSmsBotV2' :
-      id === 'msi' ? 'msiBot' :
-      id === 'seven1tel' ? 'seven1telBot' :
-      id === 'numpanel' ? 'numpanelBot' :
-      'imsBot';
-    let botMsg = '';
-    try {
-      const bot = require(`../workers/${botFile}`);
-      if (enabled) {
-        bot.start();
-        botMsg = 'bot started';
-      } else {
-        if (typeof bot.stop === 'function') {
-          await bot.stop();
-          botMsg = 'bot stopped';
-        } else {
-          botMsg = 'bot has no stop() — will exit on next cycle';
-        }
-      }
-      bot.logEvent && bot.logEvent(enabled ? 'success' : 'warn', `Toggled ${enabled ? 'ON' : 'OFF'} by admin`);
-    } catch (e) {
-      console.warn(`provider-toggle ${id}: bot ${enabled ? 'start' : 'stop'} failed:`, e.message);
-      botMsg = `bot reload failed: ${e.message}`;
-    }
-
-    logFromReq(req, 'provider_toggle', { meta: { id, enabled, bot: botMsg } });
-    res.json({ ok: true, id, enabled, message: botMsg });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1112,8 +921,11 @@ router.put('/msi-credentials', async (req, res) => {
     }
     if (typeof enabled === 'boolean') upsert.run('msi_enabled', enabled ? 'true' : 'false');
     logFromReq(req, 'msi_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
-    try { await restartWorkerBot('../workers/msiBot'); }
-    catch (e) { console.warn('msi-credentials: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/msiBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Credentials updated by admin — bot restarting');
+    } catch (e) { console.warn('msi-credentials: restart failed:', e.message); }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1137,8 +949,11 @@ router.put('/msi-otp-interval', async (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
     `).run(String(interval));
     logFromReq(req, 'msi_otp_interval_updated', { meta: { interval_sec: interval } });
-    try { await restartWorkerBot('../workers/msiBot'); }
-    catch (e) { console.warn('msi-otp-interval restart:', e.message); }
+    try {
+      const bot = require('../workers/msiBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', `OTP poll interval changed to ${interval}s by admin`);
+    } catch (e) { console.warn('msi-otp-interval restart:', e.message); }
     res.json({ ok: true, interval_sec: interval });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1168,8 +983,11 @@ router.put('/msi-cookies', async (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
     `).run(cookies.trim());
     logFromReq(req, 'msi_cookies_updated', { meta: { length: cookies.length } });
-    try { await restartWorkerBot('../workers/msiBot'); }
-    catch (e) { console.warn('msi-cookies: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/msiBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Session cookies updated by admin — bot restarting');
+    } catch (e) { console.warn('msi-cookies: restart failed:', e.message); }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1178,7 +996,10 @@ router.delete('/msi-cookies', async (req, res) => {
   try {
     db.prepare("DELETE FROM settings WHERE key = 'msi_cookies'").run();
     logFromReq(req, 'msi_cookies_cleared', {});
-    try { await restartWorkerBot('../workers/msiBot'); } catch (_) {}
+    try {
+      const bot = require('../workers/msiBot');
+      await bot.restart();
+    } catch (_) {}
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1273,14 +1094,11 @@ router.get('/numpanel-pool-breakdown', (req, res) => {
   res.json({ ranges, totalActive, totalUsed });
 });
 
-// ---- Generic Range Metadata Routes (numpanel | ims | msi | iprn | iprn_sms) ----
+// ---- Generic Range Metadata Routes (numpanel | ims | msi) ----
 const RANGE_META_TABLES = {
   numpanel: 'numpanel_range_meta',
   ims: 'ims_range_meta',
   msi: 'msi_range_meta',
-  iprn_sms: 'iprn_sms_range_meta',
-  iprn_sms_v2: 'iprn_sms_v2_range_meta',
-  seven1tel: 'seven1tel_range_meta',
 };
 const VALID_SERVICE_TAGS = new Set(['facebook', 'whatsapp', 'telegram', 'instagram', 'twitter', 'tiktok', 'google', 'other', null, '']);
 
@@ -1332,9 +1150,6 @@ function rangeMetaRoutes(provider) {
 rangeMetaRoutes('numpanel');
 rangeMetaRoutes('ims');
 rangeMetaRoutes('msi');
-rangeMetaRoutes('iprn_sms');
-rangeMetaRoutes('iprn_sms_v2');
-rangeMetaRoutes('seven1tel');
 
 router.get('/numpanel-credentials', (req, res) => {
   const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -1376,8 +1191,11 @@ router.put('/numpanel-credentials', async (req, res) => {
     }
     if (typeof enabled === 'boolean') upsert.run('numpanel_enabled', enabled ? '1' : '0');
     logFromReq(req, 'numpanel_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
-    try { await restartWorkerBot('../workers/numpanelBot'); }
-    catch (e) { console.warn('numpanel-credentials: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Credentials updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-credentials: restart failed:', e.message); }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1400,8 +1218,11 @@ router.put('/numpanel-otp-interval', async (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
     `).run(String(interval));
     logFromReq(req, 'numpanel_otp_interval_updated', { meta: { interval_sec: interval } });
-    try { await restartWorkerBot('../workers/numpanelBot'); }
-    catch (e) { console.warn('numpanel-otp-interval restart:', e.message); }
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', `OTP poll interval changed to ${interval}s by admin`);
+    } catch (e) { console.warn('numpanel-otp-interval restart:', e.message); }
     res.json({ ok: true, interval_sec: interval });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1429,8 +1250,11 @@ router.put('/numpanel-api-token', async (req, res) => {
     if (typeof api_token === 'string' && api_token.length) upsert.run('numpanel_api_token', api_token.trim());
     if (typeof api_base === 'string' && api_base.length) upsert.run('numpanel_api_base', api_base.trim().replace(/\/+$/, ''));
     logFromReq(req, 'numpanel_api_token_updated', {});
-    try { await restartWorkerBot('../workers/numpanelBot'); }
-    catch (e) { console.warn('numpanel-api-token restart:', e.message); }
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'API token updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-api-token restart:', e.message); }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1459,8 +1283,11 @@ router.put('/numpanel-cookies', async (req, res) => {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
     `).run(cookies.trim());
     logFromReq(req, 'numpanel_cookies_updated', { meta: { length: cookies.length } });
-    try { await restartWorkerBot('../workers/numpanelBot'); }
-    catch (e) { console.warn('numpanel-cookies: restart failed:', e.message); }
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+      bot.logEvent && bot.logEvent('success', 'Session cookies updated by admin — bot restarting');
+    } catch (e) { console.warn('numpanel-cookies: restart failed:', e.message); }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1469,7 +1296,10 @@ router.delete('/numpanel-cookies', async (req, res) => {
   try {
     db.prepare("DELETE FROM settings WHERE key = 'numpanel_cookies'").run();
     logFromReq(req, 'numpanel_cookies_cleared', {});
-    try { await restartWorkerBot('../workers/numpanelBot'); } catch (_) {}
+    try {
+      const bot = require('../workers/numpanelBot');
+      await bot.restart();
+    } catch (_) {}
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1511,701 +1341,5 @@ router.post('/fake-otp/purge', (req, res) => {
 });
 
 
-// ============================================================
-// IPRN-SMS bot admin routes (panel.iprn-sms.com)
-// Mirrors /iprn-* but uses workers/iprnSmsBot. The bot is JSON-API + ZIP
-// based, so there is no OTP interval (OTP feed not yet wired).
-// ============================================================
-router.get('/iprn-sms-status', (req, res) => {
-  try {
-    const { getStatus } = require('../workers/iprnSmsBot');
-    res.json({ status: getStatus() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-restart', async (req, res) => {
-  try {
-    const { restart } = require('../workers/iprnSmsBot');
-    await restart();
-    logFromReq(req, 'iprn_sms_bot_restart');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-start', async (req, res) => {
-  try {
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('iprn_sms_enabled', 'true', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = excluded.updated_at
-    `).run();
-    const bot = require('../workers/iprnSmsBot');
-    try { bot.stop(); } catch (_) {}
-    bot.start();
-    logFromReq(req, 'iprn_sms_bot_start');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-stop', async (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBot');
-    bot.stop();
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('iprn_sms_enabled', 'false', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at
-    `).run();
-    logFromReq(req, 'iprn_sms_bot_stop');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-scrape-now', async (req, res) => {
-  try {
-    const { scrapeNow } = require('../workers/iprnSmsBot');
-    const result = await scrapeNow();
-    logFromReq(req, 'iprn_sms_scrape_now', { meta: result });
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Pool breakdown by range (with disabled flag for admin toggles)
-router.get('/iprn-sms-pool-breakdown', (req, res) => {
-  try {
-    const ranges = db.prepare(`
-      SELECT
-        COALESCE(a.operator, 'Unknown') AS name,
-        COALESCE(a.operator, 'Unknown') AS range_name,
-        COUNT(*) AS count,
-        MAX(a.allocated_at) AS last_added,
-        MIN(a.allocated_at) AS first_added,
-        m.custom_name, m.tag_color, m.priority,
-        m.request_override, m.notes,
-        COALESCE(m.disabled, 0) AS disabled,
-        m.service_tag
-      FROM allocations a
-      LEFT JOIN iprn_sms_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
-      WHERE a.provider = 'iprn_sms' AND a.status = 'pool'
-      GROUP BY COALESCE(a.operator, 'Unknown')
-      ORDER BY COALESCE(m.priority, 0) DESC, count DESC
-    `).all();
-    const totalPool = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms' AND status='pool'`).get().c;
-    const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms' AND status='active'`).get().c;
-    const totalUsed = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms' AND status='used'`).get().c;
-    res.json({ ranges, totalPool, totalActive, totalUsed });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Paginated allocation rows for iprn_sms (mirrors /iprn-numbers)
-router.get('/iprn-sms-numbers', (req, res) => {
-  try {
-    const status = String(req.query.status || 'all');
-    const q      = String(req.query.q || '').trim();
-    const limit  = Math.min(500, Math.max(1, +req.query.limit || 100));
-    const offset = Math.max(0, +req.query.offset || 0);
-
-    const where = [`a.provider = 'iprn_sms'`];
-    const params = [];
-    if (status !== 'all') { where.push(`a.status = ?`); params.push(status); }
-    if (q) {
-      where.push(`(a.phone_number LIKE ? OR COALESCE(a.operator,'') LIKE ? OR COALESCE(a.country_code,'') LIKE ?)`);
-      const like = `%${q}%`;
-      params.push(like, like, like);
-    }
-    const whereSql = where.join(' AND ');
-
-    const total = db.prepare(`SELECT COUNT(*) c FROM allocations a WHERE ${whereSql}`).get(...params).c;
-    const rows = db.prepare(`
-      SELECT a.id, a.phone_number, a.operator AS range_name, a.country_code,
-             a.status, a.allocated_at, a.user_id, a.otp,
-             u.username
-      FROM allocations a
-      LEFT JOIN users u ON u.id = a.user_id
-      WHERE ${whereSql}
-      ORDER BY a.allocated_at DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-
-    const counts = db.prepare(`
-      SELECT status, COUNT(*) c FROM allocations
-      WHERE provider='iprn_sms' GROUP BY status
-    `).all().reduce((acc, r) => { acc[r.status] = r.c; return acc; }, {});
-
-    res.json({ rows, total, limit, offset, counts });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Credentials get/put — env default + DB override per user request
-router.get('/iprn-sms-credentials', (req, res) => {
-  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  const username = get('iprn_sms_username') || process.env.IPRN_SMS_USERNAME || '';
-  const password = get('iprn_sms_password') || process.env.IPRN_SMS_PASSWORD || '';
-  const base_url = get('iprn_sms_base_url') || process.env.IPRN_SMS_BASE_URL || 'https://panel.iprn-sms.com';
-  const sms_type = get('iprn_sms_type') || process.env.IPRN_SMS_TYPE || 'sms';
-  const enabled = (get('iprn_sms_enabled') || process.env.IPRN_SMS_ENABLED || 'false').toString().toLowerCase() === 'true';
-  res.json({
-    username,
-    password_set: !!password,
-    base_url,
-    sms_type,
-    enabled,
-    sources: {
-      username: get('iprn_sms_username') ? 'database' : (process.env.IPRN_SMS_USERNAME ? 'env' : 'none'),
-      password: get('iprn_sms_password') ? 'database' : (process.env.IPRN_SMS_PASSWORD ? 'env' : 'none'),
-    },
-  });
-});
-
-router.put('/iprn-sms-credentials', async (req, res) => {
-  try {
-    const { username, password, base_url, sms_type, enabled } = req.body || {};
-    const upsert = db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-    `);
-    if (typeof username === 'string' && username.length) upsert.run('iprn_sms_username', username.trim());
-    if (typeof password === 'string' && password.length) upsert.run('iprn_sms_password', password);
-    if (typeof base_url === 'string') {
-      const clean = base_url.trim().replace(/\/+$/, '');
-      if (clean) upsert.run('iprn_sms_base_url', clean);
-    }
-    if (typeof sms_type === 'string' && /^(sms|voice)$/i.test(sms_type)) {
-      upsert.run('iprn_sms_type', sms_type.toLowerCase());
-    }
-    if (typeof enabled === 'boolean') upsert.run('iprn_sms_enabled', enabled ? 'true' : 'false');
-    logFromReq(req, 'iprn_sms_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
-    try { await restartWorkerBot('../workers/iprnSmsBot'); }
-    catch (e) { console.warn('iprn_sms-credentials: restart failed:', e.message); }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Cookie meta + clear (parity with /iprn-cookies)
-router.get('/iprn-sms-cookies', (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBot');
-    res.json(bot.getCookieMeta ? bot.getCookieMeta() : { has_cookies: false, count: 0, saved_at: null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.delete('/iprn-sms-cookies', async (req, res) => {
-  try {
-    if (WORKERS_IN_API) {
-      const bot = require('../workers/iprnSmsBot');
-      if (bot.clearPersistedCookies) bot.clearPersistedCookies();
-    } else {
-      db.prepare("DELETE FROM settings WHERE key IN ('iprn_sms_cookies','iprn_sms_cookies_saved_at')").run();
-    }
-    logFromReq(req, 'iprn_sms_cookies_cleared');
-    try { await restartWorkerBot('../workers/iprnSmsBot'); } catch (_) {}
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Test current credentials by doing a full login round-trip without restarting
-// the bot. Returns { ok, latency_ms, error? }.
-router.post('/iprn-sms-test-login', async (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBot');
-    if (typeof bot.testLogin !== 'function') {
-      return res.status(501).json({ ok: false, error: 'Bot does not support test-login' });
-    }
-    const result = await bot.testLogin();
-    logFromReq(req, 'iprn_sms_test_login', { meta: { ok: result.ok, latency_ms: result.latency_ms } });
-    res.json(result);
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-
 module.exports = router;
 
-
-// ============================================================
-// IPRN-SMS V2 bot admin routes (second account on panel.iprn-sms.com)
-// Exact mirror of /iprn-sms-* but targets workers/iprnSmsBotV2 with
-// settings keys prefixed iprn_sms_v2_ and provider id 'iprn_sms_v2'.
-// ============================================================
-router.get('/iprn-sms-v2-status', (req, res) => {
-  try {
-    const { getStatus } = require('../workers/iprnSmsBotV2');
-    res.json({ status: getStatus() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-v2-restart', async (req, res) => {
-  try {
-    const { restart } = require('../workers/iprnSmsBotV2');
-    await restart();
-    logFromReq(req, 'iprn_sms_v2_bot_restart');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-v2-start', async (req, res) => {
-  try {
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('iprn_sms_v2_enabled', 'true', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = excluded.updated_at
-    `).run();
-    const bot = require('../workers/iprnSmsBotV2');
-    try { bot.stop(); } catch (_) {}
-    bot.start();
-    logFromReq(req, 'iprn_sms_v2_bot_start');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-v2-stop', async (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBotV2');
-    bot.stop();
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('iprn_sms_v2_enabled', 'false', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at
-    `).run();
-    logFromReq(req, 'iprn_sms_v2_bot_stop');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-v2-scrape-now', async (req, res) => {
-  try {
-    const { scrapeNow } = require('../workers/iprnSmsBotV2');
-    const result = await scrapeNow();
-    logFromReq(req, 'iprn_sms_v2_scrape_now', { meta: result });
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/iprn-sms-v2-pool-breakdown', (req, res) => {
-  try {
-    const ranges = db.prepare(`
-      SELECT
-        COALESCE(a.operator, 'Unknown') AS name,
-        COALESCE(a.operator, 'Unknown') AS range_name,
-        COUNT(*) AS count,
-        MAX(a.allocated_at) AS last_added,
-        MIN(a.allocated_at) AS first_added,
-        m.custom_name, m.tag_color, m.priority,
-        m.request_override, m.notes,
-        COALESCE(m.disabled, 0) AS disabled,
-        m.service_tag
-      FROM allocations a
-      LEFT JOIN iprn_sms_v2_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
-      WHERE a.provider = 'iprn_sms_v2' AND a.status = 'pool'
-      GROUP BY COALESCE(a.operator, 'Unknown')
-      ORDER BY COALESCE(m.priority, 0) DESC, count DESC
-    `).all();
-    const totalPool   = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='pool'`).get().c;
-    const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='active'`).get().c;
-    const totalUsed   = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='used'`).get().c;
-    res.json({ ranges, totalPool, totalActive, totalUsed });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/iprn-sms-v2-numbers', (req, res) => {
-  try {
-    const status = String(req.query.status || 'all');
-    const q      = String(req.query.q || '').trim();
-    const limit  = Math.min(500, Math.max(1, +req.query.limit || 100));
-    const offset = Math.max(0, +req.query.offset || 0);
-    const where = [`a.provider = 'iprn_sms_v2'`];
-    const params = [];
-    if (status !== 'all') { where.push(`a.status = ?`); params.push(status); }
-    if (q) {
-      where.push(`(a.phone_number LIKE ? OR COALESCE(a.operator,'') LIKE ? OR COALESCE(a.country_code,'') LIKE ?)`);
-      const like = `%${q}%`;
-      params.push(like, like, like);
-    }
-    const whereSql = where.join(' AND ');
-    const total = db.prepare(`SELECT COUNT(*) c FROM allocations a WHERE ${whereSql}`).get(...params).c;
-    const rows = db.prepare(`
-      SELECT a.id, a.phone_number, a.operator AS range_name, a.country_code,
-             a.status, a.allocated_at, a.user_id, a.otp, u.username
-      FROM allocations a LEFT JOIN users u ON u.id = a.user_id
-      WHERE ${whereSql}
-      ORDER BY a.allocated_at DESC LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
-    const counts = db.prepare(`
-      SELECT status, COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' GROUP BY status
-    `).all().reduce((acc, r) => { acc[r.status] = r.c; return acc; }, {});
-    res.json({ rows, total, limit, offset, counts });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/iprn-sms-v2-credentials', (req, res) => {
-  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  const username = get('iprn_sms_v2_username') || process.env.IPRN_SMS_V2_USERNAME || '';
-  const password = get('iprn_sms_v2_password') || process.env.IPRN_SMS_V2_PASSWORD || '';
-  const base_url = get('iprn_sms_v2_base_url') || process.env.IPRN_SMS_V2_BASE_URL || 'https://panel.iprn-sms.com';
-  const sms_type = get('iprn_sms_v2_type') || process.env.IPRN_SMS_V2_TYPE || 'sms';
-  const enabled = (get('iprn_sms_v2_enabled') || process.env.IPRN_SMS_V2_ENABLED || 'false').toString().toLowerCase() === 'true';
-  res.json({
-    username, password_set: !!password, base_url, sms_type, enabled,
-    sources: {
-      username: get('iprn_sms_v2_username') ? 'database' : (process.env.IPRN_SMS_V2_USERNAME ? 'env' : 'none'),
-      password: get('iprn_sms_v2_password') ? 'database' : (process.env.IPRN_SMS_V2_PASSWORD ? 'env' : 'none'),
-    },
-  });
-});
-
-router.put('/iprn-sms-v2-credentials', async (req, res) => {
-  try {
-    const { username, password, base_url, sms_type, enabled } = req.body || {};
-    const upsert = db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-    `);
-    if (typeof username === 'string' && username.length) upsert.run('iprn_sms_v2_username', username.trim());
-    if (typeof password === 'string' && password.length) upsert.run('iprn_sms_v2_password', password);
-    if (typeof base_url === 'string') {
-      const clean = base_url.trim().replace(/\/+$/, '');
-      if (clean) upsert.run('iprn_sms_v2_base_url', clean);
-    }
-    if (typeof sms_type === 'string' && /^(sms|voice)$/i.test(sms_type)) {
-      upsert.run('iprn_sms_v2_type', sms_type.toLowerCase());
-    }
-    if (typeof enabled === 'boolean') upsert.run('iprn_sms_v2_enabled', enabled ? 'true' : 'false');
-    logFromReq(req, 'iprn_sms_v2_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
-    try { await restartWorkerBot('../workers/iprnSmsBotV2'); }
-    catch (e) { console.warn('iprn_sms_v2-credentials: restart failed:', e.message); }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/iprn-sms-v2-cookies', (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBotV2');
-    res.json(bot.getCookieMeta ? bot.getCookieMeta() : { has_cookies: false, count: 0, saved_at: null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.delete('/iprn-sms-v2-cookies', async (req, res) => {
-  try {
-    if (WORKERS_IN_API) {
-      const bot = require('../workers/iprnSmsBotV2');
-      if (bot.clearPersistedCookies) bot.clearPersistedCookies();
-    } else {
-      db.prepare("DELETE FROM settings WHERE key IN ('iprn_sms_v2_cookies','iprn_sms_v2_cookies_saved_at')").run();
-    }
-    logFromReq(req, 'iprn_sms_v2_cookies_cleared');
-    try { await restartWorkerBot('../workers/iprnSmsBotV2'); } catch (_) {}
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/iprn-sms-v2-test-login', async (req, res) => {
-  try {
-    const bot = require('../workers/iprnSmsBotV2');
-    if (typeof bot.testLogin !== 'function') {
-      return res.status(501).json({ ok: false, error: 'Bot does not support test-login' });
-    }
-    const result = await bot.testLogin();
-    logFromReq(req, 'iprn_sms_v2_test_login', { meta: { ok: result.ok, latency_ms: result.latency_ms } });
-    res.json(result);
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-
-// ============================================================
-// SEVEN1TEL Bot — mirrors IMS endpoints (status/start/stop/restart/scrape/sync/credentials)
-// ============================================================
-
-router.get('/seven1tel-status', (req, res) => {
-  try {
-    const { getStatus } = require('../workers/seven1telBot');
-    res.json({ status: getStatus() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/seven1tel-restart', async (req, res) => {
-  try {
-    const { restart } = require('../workers/seven1telBot');
-    await restart();
-    logFromReq(req, 'seven1tel_bot_restart');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/seven1tel-start', async (req, res) => {
-  try {
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('seven1tel_enabled', 'true', strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = strftime('%s','now')
-    `).run();
-    const bot = require('../workers/seven1telBot');
-    bot.start();
-    const snapshot = bot.getStatus ? bot.getStatus() : null;
-    if (!snapshot?.running) {
-      return res.status(400).json({ error: snapshot?.lastError || 'SEVEN1TEL bot did not start', status: snapshot, auto_enabled: true });
-    }
-    bot.logEvent && bot.logEvent('success', 'Bot started by admin');
-    logFromReq(req, 'seven1tel_bot_start');
-    res.json({ ok: true, status: snapshot, auto_enabled: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/seven1tel-stop', async (req, res) => {
-  try {
-    const bot = require('../workers/seven1telBot');
-    await bot.stop();
-    bot.logEvent && bot.logEvent('warn', 'Bot stopped by admin');
-    logFromReq(req, 'seven1tel_bot_stop');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/seven1tel-scrape-now', async (req, res) => {
-  try {
-    const { scrapeNow } = require('../workers/seven1telBot');
-    const result = await scrapeNow();
-    logFromReq(req, 'seven1tel_scrape_now', { meta: result });
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/seven1tel-sync-live', async (req, res) => {
-  try {
-    const { syncLive } = require('../workers/seven1telBot');
-    const result = await syncLive();
-    logFromReq(req, 'seven1tel_sync_live', { meta: result });
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/seven1tel-pool-breakdown', (req, res) => {
-  const ranges = db.prepare(`
-    SELECT
-      COALESCE(a.operator, 'Unknown') AS name,
-      COUNT(*) AS count,
-      MAX(a.allocated_at) AS last_added,
-      MIN(a.allocated_at) AS first_added,
-      m.custom_name, m.tag_color, m.priority,
-      m.request_override, m.notes, m.disabled, m.service_tag
-    FROM allocations a
-    LEFT JOIN seven1tel_range_meta m ON m.range_prefix = COALESCE(a.operator, 'Unknown')
-    WHERE a.provider = 'seven1tel' AND a.status = 'pool'
-    GROUP BY COALESCE(a.operator, 'Unknown')
-    ORDER BY COALESCE(m.priority, 0) DESC, count DESC
-  `).all();
-  const totalActive = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='seven1tel' AND status='active'`).get().c;
-  const totalUsed = db.prepare(`SELECT COUNT(*) c FROM allocations WHERE provider='seven1tel' AND status='used'`).get().c;
-  res.json({ ranges, totalActive, totalUsed });
-});
-
-router.get('/seven1tel-credentials', (req, res) => {
-  const get = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  const username = get('seven1tel_username') || process.env.SEVEN1TEL_USERNAME || '';
-  const password = get('seven1tel_password') || process.env.SEVEN1TEL_PASSWORD || '';
-  const base_url = get('seven1tel_base_url') || process.env.SEVEN1TEL_BASE_URL || 'http://94.23.120.156';
-  const enabled = (get('seven1tel_enabled') || process.env.SEVEN1TEL_ENABLED || 'false').toString().toLowerCase() === 'true';
-  const mask = (s) => s ? (s.length <= 4 ? '****' : s.slice(0,2) + '****' + s.slice(-2)) : '';
-  res.json({
-    enabled,
-    base_url,
-    username,
-    password_masked: mask(password),
-    has_password: !!password,
-    source: {
-      username: get('seven1tel_username') ? 'database' : (process.env.SEVEN1TEL_USERNAME ? 'env' : 'none'),
-      password: get('seven1tel_password') ? 'database' : (process.env.SEVEN1TEL_PASSWORD ? 'env' : 'none'),
-    },
-  });
-});
-
-router.put('/seven1tel-credentials', async (req, res) => {
-  try {
-    const { username, password, base_url, enabled } = req.body || {};
-    const upsert = db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
-    `);
-    if (typeof username === 'string' && username.length) upsert.run('seven1tel_username', username.trim());
-    if (typeof password === 'string' && password.length) upsert.run('seven1tel_password', password);
-    if (typeof base_url === 'string' && base_url.length) {
-      // Normalize: keep scheme+host only. Strip /ints/login or any path the admin pasted.
-      let clean = base_url.trim().replace(/\/+$/, '');
-      try {
-        const u = new URL(/^https?:\/\//i.test(clean) ? clean : `http://${clean}`);
-        clean = `${u.protocol}//${u.host}`;
-      } catch (_) {
-        clean = clean.replace(/\/ints\/.*$/i, '').replace(/\/+$/, '');
-      }
-      if (clean) upsert.run('seven1tel_base_url', clean);
-    }
-    if (typeof enabled === 'boolean') upsert.run('seven1tel_enabled', enabled ? 'true' : 'false');
-    logFromReq(req, 'seven1tel_credentials_updated', { meta: { username: username || '(unchanged)', enabled } });
-    try { await restartWorkerBot('../workers/seven1telBot'); }
-    catch (e) { console.warn('seven1tel-credentials: restart failed:', e.message); }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ---- SEVEN1TEL OTP poll interval (mirrors IMS) ----
-router.get('/seven1tel-otp-interval', (req, res) => {
-  const dbVal = +(db.prepare("SELECT value FROM settings WHERE key = 'seven1tel_otp_interval'").get()?.value || 0);
-  const envVal = +(process.env.SEVEN1TEL_SCRAPE_INTERVAL || 5);
-  const effective = dbVal > 0 ? dbVal : envVal;
-  res.json({ interval_sec: effective, source: dbVal > 0 ? 'database' : 'env', options: [3, 5, 10, 30], min: 3, max: 120 });
-});
-
-router.put('/seven1tel-otp-interval', async (req, res) => {
-  try {
-    const interval = +(req.body?.interval_sec);
-    if (!Number.isFinite(interval) || interval < 3 || interval > 120) {
-      return res.status(400).json({ error: 'interval_sec must be a number between 3 and 120' });
-    }
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('seven1tel_otp_interval', ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
-    `).run(String(interval));
-    logFromReq(req, 'seven1tel_otp_interval_updated', { meta: { interval_sec: interval } });
-    try { await restartWorkerBot('../workers/seven1telBot'); }
-    catch (e) { console.warn('seven1tel-otp-interval restart:', e.message); }
-    res.json({ ok: true, interval_sec: interval });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ---- SEVEN1TEL Session Cookies (mirrors IMS) ----
-router.get('/seven1tel-cookies', (req, res) => {
-  const row = db.prepare("SELECT value, updated_at FROM settings WHERE key = 'seven1tel_cookies'").get();
-  if (!row || !row.value) return res.json({ has_cookies: false, count: 0, saved_at: null });
-  let count = 0;
-  try {
-    const parsed = JSON.parse(row.value);
-    count = Array.isArray(parsed) ? parsed.length : 0;
-  } catch (_) {
-    count = (row.value.match(/[^;\s][^;]*=/g) || []).length;
-  }
-  res.json({ has_cookies: true, count, saved_at: row.updated_at });
-});
-
-router.put('/seven1tel-cookies', async (req, res) => {
-  try {
-    const { cookies } = req.body || {};
-    if (typeof cookies !== 'string' || !cookies.trim()) {
-      return res.status(400).json({ error: 'cookies (string) required' });
-    }
-    db.prepare(`
-      INSERT INTO settings (key, value, updated_at) VALUES ('seven1tel_cookies', ?, strftime('%s','now'))
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%s','now')
-    `).run(cookies.trim());
-    logFromReq(req, 'seven1tel_cookies_updated', { meta: { length: cookies.length } });
-    try { await restartWorkerBot('../workers/seven1telBot'); }
-    catch (e) { console.warn('seven1tel-cookies: restart failed:', e.message); }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.delete('/seven1tel-cookies', async (req, res) => {
-  try {
-    db.prepare("DELETE FROM settings WHERE key = 'seven1tel_cookies'").run();
-    logFromReq(req, 'seven1tel_cookies_cleared', {});
-    try { await restartWorkerBot('../workers/seven1telBot'); } catch (_) {}
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// Auto-pool admin routes — per-bot scrape interval / TTL / size cap.
-// One row per registered bot in lib/autopool.js.
-// ============================================================
-router.get('/autopool', (req, res) => {
-  try {
-    const autopool = require('../lib/autopool');
-    res.json({ bots: autopool.listBots() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.get('/autopool/:botId', (req, res) => {
-  try {
-    const autopool = require('../lib/autopool');
-    const bot = autopool.getBot(req.params.botId);
-    if (!bot) return res.status(404).json({ error: 'Unknown bot' });
-    res.json({ bot });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.put('/autopool/:botId', (req, res) => {
-  try {
-    const autopool = require('../lib/autopool');
-    const cur = autopool.getBot(req.params.botId);
-    if (!cur) return res.status(404).json({ error: 'Unknown bot' });
-    const { enabled, interval_min, ttl_min, max_size } = req.body || {};
-    const next = autopool.saveConfig(req.params.botId, { enabled, interval_min, ttl_min, max_size });
-    logFromReq(req, 'autopool_config_updated', { meta: { botId: req.params.botId, ...next } });
-    res.json({ ok: true, config: next });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/autopool/:botId/run', async (req, res) => {
-  try {
-    const autopool = require('../lib/autopool');
-    const r = await autopool.runOnce(req.params.botId, { force: true });
-    logFromReq(req, 'autopool_run_now', { meta: { botId: req.params.botId, result: r.result } });
-    res.json(r);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// IPRN-SMS / V2 OTP DELIVERIES — admin endpoint that powers the
-// "OTP Delivery" status pages. Joins otp_audit_log with allocations +
-// users so admins (and agents reading their own) can see the full
-// lifecycle of every scraped OTP: scrape → match → credit (or no_match
-// rejection). One endpoint shared by both bots, filtered by `provider`.
-// ============================================================
-function otpDeliveriesHandler(provider) {
-  return (req, res) => {
-    try {
-      const limit  = Math.min(500, Math.max(1, +req.query.limit || 200));
-      const event  = String(req.query.event || '').trim();        // matched|credited|no_match|scrape_fail
-      const since  = +req.query.since || (Math.floor(Date.now() / 1000) - 86400);
-      const search = String(req.query.q || '').trim();
-
-      const where = [`l.provider = ?`, `l.ts >= ?`];
-      const params = [provider, since];
-      if (event) { where.push(`l.event = ?`); params.push(event); }
-      if (search) {
-        where.push(`(l.phone_number LIKE ? OR l.otp_code LIKE ? OR COALESCE(u.username,'') LIKE ?)`);
-        const like = `%${search}%`;
-        params.push(like, like, like);
-      }
-
-      const rows = db.prepare(`
-        SELECT l.id, l.ts, l.event, l.phone_number, l.otp_code,
-               l.endpoint, l.currency, l.detail,
-               l.allocation_id, l.user_id,
-               u.username AS agent_username,
-               a.status   AS allocation_status,
-               a.operator AS allocation_range,
-               a.allocated_at,
-               a.otp_received_at
-        FROM otp_audit_log l
-        LEFT JOIN users u ON u.id = l.user_id
-        LEFT JOIN allocations a ON a.id = l.allocation_id
-        WHERE ${where.join(' AND ')}
-        ORDER BY l.ts DESC, l.id DESC
-        LIMIT ?
-      `).all(...params, limit);
-
-      // Counters over the requested window — admin-friendly summary
-      const countOf = (ev) => {
-        const w = [`provider = ?`, `ts >= ?`, `event = ?`];
-        const p = [provider, since, ev];
-        return db.prepare(`SELECT COUNT(*) c FROM otp_audit_log WHERE ${w.join(' AND ')}`).get(...p).c;
-      };
-      const stats = {
-        scraped:  countOf('scrape_ok'),
-        matched:  countOf('matched'),
-        credited: countOf('credited'),
-        rejected: countOf('no_match'),
-        failures: countOf('scrape_fail'),
-      };
-
-      res.json({ rows, stats, since, provider });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  };
-}
-router.get('/iprn-sms-otp-deliveries',    otpDeliveriesHandler('iprn_sms'));
-router.get('/iprn-sms-v2-otp-deliveries', otpDeliveriesHandler('iprn_sms_v2'));

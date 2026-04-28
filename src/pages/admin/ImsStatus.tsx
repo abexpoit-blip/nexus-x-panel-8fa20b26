@@ -300,20 +300,6 @@ const AdminImsStatus = () => {
 
       {isLoading && <p className="text-center text-muted-foreground text-sm">Loading…</p>}
 
-      {!isLoading && !s && (
-        <div className="glass-card rounded-xl p-4 border border-neon-amber/40 bg-neon-amber/5 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-neon-amber shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <div className="font-semibold text-neon-amber">Worker process is busy or offline</div>
-            <div className="text-muted-foreground mt-0.5">
-              Couldn't fetch live bot status from <code className="font-mono text-xs">nexus-workers</code> within 4s.
-              The worker may be mid-scrape or restarting. The page will keep retrying every 5s.
-              If this persists, run <code className="font-mono text-xs">pm2 restart nexus-workers</code>.
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Background numbers-scrape job — shows live status when running or last result */}
       {numbersJob && numbersJob.status !== "idle" && (
         <div className={cn(

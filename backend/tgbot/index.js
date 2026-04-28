@@ -6,8 +6,6 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') }
 const { Telegraf, Markup } = require('telegraf');
 const db = require('../lib/db');
 const { bestCountryCode, countryName: ccName, flagOf: ccFlag, COUNTRY_NAMES: CC_NAMES } = require('../lib/countryInfer');
-const { renderFlagHtml, getFlagEmoji, FLAG_EMOJI_IDS, loadFlagPack,
-        ICON_EMOJI_IDS, loadIconPack } = require('./flagEmojiMap');
 
 const TOKEN = process.env.TG_BOT_TOKEN;
 if (!TOKEN) {
@@ -20,11 +18,6 @@ const EXPIRY_SEC        = +(process.env.TG_EXPIRY_SEC || 1800);   // 30 min
 const EXPIRY_MIN        = Math.round(EXPIRY_SEC / 60);
 const SUPPORT_URL       = process.env.TG_SUPPORT_URL || 'https://t.me/';
 const SITE_URL          = process.env.TG_SITE_URL || 'https://nexus-x.site';
-
-// Cached bot username — populated at launch via getMe(); used to build the
-// single "Bot" inline button on every public OTP post so users in the channel
-// can jump straight to the bot. No support button — bot link only.
-let BOT_USERNAME = process.env.TG_BOT_USERNAME || '';
 
 // ---------- Public OTP history channel (admin configurable) ----------
 // Admin sets setting key `tg_public_channel` to a channel/group chat id like -1001234567890.
@@ -45,23 +38,6 @@ function getPublicChannelId() {
   } catch { return null; }
 }
 
-// Dedicated "OTP feed" group/channel. If unset, falls back to tg_public_channel.
-// Use this when you want a SEPARATE group that receives every real OTP (bot must be admin there).
-function getOtpFeedChatId() {
-  try {
-    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_otp_feed_chat'").get()?.value;
-    if (!v) return getPublicChannelId();
-    let n = String(v).trim();
-    if (!n) return getPublicChannelId();
-    if (n.startsWith('https://t.me/')) n = n.replace('https://t.me/', '');
-    if (n.startsWith('http://t.me/')) n = n.replace('http://t.me/', '');
-    if (/^-?\d+$/.test(n)) return n;
-    if (n.startsWith('@')) return n;
-    if (n.startsWith('+')) return null;         // private invite hash — needs numeric id
-    return '@' + n;
-  } catch { return getPublicChannelId(); }
-}
-
 function getBotConfig() {
   try {
     const rows = db.prepare(`
@@ -70,20 +46,20 @@ function getBotConfig() {
     `).all();
     const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     return {
-      publicChannel: map.tg_public_channel || '@nexusxotpfeed',
-      requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpfeed',
-      requiredGroupChat: map.tg_required_group_chat || '@nexusxotpfeed',
-      otpGroup: map.tg_required_otp_group || 'https://t.me/nexusxotpfeed',
-      otpGroupChat: map.tg_required_otp_group_chat || '@nexusxotpfeed',
+      publicChannel: map.tg_public_channel || '@nexusxotpgroup',
+      requiredGroup: map.tg_required_group || 'https://t.me/nexusxotpgroup',
+      requiredGroupChat: map.tg_required_group_chat || '@nexusxotpgroup',
+      otpGroup: map.tg_required_otp_group || 'https://t.me/+6RUOKrkz6YU1Yjk1',
+      otpGroupChat: map.tg_required_otp_group_chat || '',
       terms: map.tg_terms_text || 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   } catch {
     return {
-      publicChannel: '@nexusxotpfeed',
-      requiredGroup: 'https://t.me/nexusxotpfeed',
-      requiredGroupChat: '@nexusxotpfeed',
-      otpGroup: 'https://t.me/nexusxotpfeed',
-      otpGroupChat: '@nexusxotpfeed',
+      publicChannel: '@nexusxotpgroup',
+      requiredGroup: 'https://t.me/nexusxotpgroup',
+      requiredGroupChat: '@nexusxotpgroup',
+      otpGroup: 'https://t.me/+6RUOKrkz6YU1Yjk1',
+      otpGroupChat: '',
       terms: 'By using this bot you agree to follow our rules, keep OTP data private, and use numbers responsibly.',
     };
   }
@@ -91,32 +67,13 @@ function getBotConfig() {
 
 // Seed the public channel on boot if admin hasn't set it yet — so fake-OTP works out of the box
 function seedDefaults() {
-  // Retry a few times — backend writers can briefly hold the DB on boot.
-  const tryOnce = () => {
+  try {
     const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value, updated_at)
       VALUES (?, ?, strftime('%s','now'))`);
-    db.transaction(() => {
-      // Unified channel — @nexusxotpgroup was removed; use @nexusxotpfeed everywhere.
-      stmt.run('tg_public_channel', '@nexusxotpfeed');
-      stmt.run('tg_required_group', 'https://t.me/nexusxotpfeed');
-      stmt.run('tg_required_group_chat', '@nexusxotpfeed');
-      stmt.run('tg_otp_feed_chat', '@nexusxotpfeed');
-      stmt.run('tg_required_otp_group', 'https://t.me/nexusxotpfeed');
-      stmt.run('tg_required_otp_group_chat', '@nexusxotpfeed');
-    })();
-  };
-  let attempts = 0;
-  const run = () => {
-    try { tryOnce(); }
-    catch (e) {
-      attempts++;
-      if (/locked/i.test(e.message) && attempts < 5) {
-        return setTimeout(run, 500 * attempts); // 0.5s, 1s, 1.5s, 2s
-      }
-      console.warn('[seedDefaults]', e.message);
-    }
-  };
-  run();
+    stmt.run('tg_public_channel', '@nexusxotpgroup');
+    stmt.run('tg_required_group', 'https://t.me/nexusxotpgroup');
+    stmt.run('tg_required_group_chat', '@nexusxotpgroup');
+  } catch (e) { console.warn('[seedDefaults]', e.message); }
 }
 seedDefaults();
 
@@ -125,23 +82,6 @@ const bot = new Telegraf(TOKEN);
 // ---------- Helpers ----------
 const now = () => Math.floor(Date.now() / 1000);
 const fmtBdt = (n) => `৳${Number(n || 0).toFixed(2)}`;
-
-// ---------- Global billing toggle ----------
-// When OFF, the bot:
-//   • Hides all balance / wallet UI from users
-//   • Skips wallet balance check before claiming numbers
-//   • Does NOT deduct on OTP success (still increments total_otps counter)
-//   • Hides 💰 Wallet from main menu
-// Default: ON (backward compatible).
-function isBillingEnabled() {
-  try {
-    const v = db.prepare("SELECT value FROM settings WHERE key = 'tg_billing_enabled'").get()?.value;
-    if (v == null) return true;
-    const s = String(v).toLowerCase().trim();
-    return !(s === '0' || s === 'false' || s === 'off' || s === 'no');
-  } catch { return true; }
-}
-
 const fmtTime = (sec) => {
   if (!sec) return '—';
   const d = new Date(sec * 1000);
@@ -161,76 +101,19 @@ const flagOf = ccFlag;
 const COUNTRY_NAMES = CC_NAMES;
 const countryName = ccName;
 
-// Service tag — short text label (FB / WA / TG …) instead of colored square emojis
-// so people instantly recognise the service in any Telegram client / language.
+// Service icon
 function serviceIcon(svc) {
-  if (!svc) return '[SMS]';
+  if (!svc) return '📡';
   const s = String(svc).toLowerCase();
-  if (s.includes('facebook'))  return '[FB]';
-  if (s.includes('whatsapp'))  return '[WA]';
-  if (s.includes('telegram'))  return '[TG]';
-  if (s.includes('tiktok'))    return '[TT]';
-  if (s.includes('instagram')) return '[IG]';
-  if (s.includes('google'))    return '[GG]';
-  if (s.includes('twitter') || s.includes('x.com')) return '[X]';
-  return '[SMS]';
-}
-
-// Brand emoji for each service — shown alongside the [TAG] in OTP feed posts
-// so the line reads e.g.  📘 [FB]  or  🟢 [WA]  or  ✈️ [TG].
-function serviceEmoji(svc) {
-  if (!svc) return '✉️';
-  const s = String(svc).toLowerCase();
-  if (s.includes('facebook'))  return '📘';
-  if (s.includes('whatsapp'))  return '🟢';
-  if (s.includes('telegram'))  return '✈️';
-  if (s.includes('tiktok'))    return '🎵';
-  if (s.includes('instagram')) return '📸';
-  if (s.includes('google') || s.includes('gmail')) return '🔴';
+  if (s.includes('facebook')) return '🟦';
+  if (s.includes('whatsapp')) return '🟢';
+  if (s.includes('telegram')) return '✈️';
+  if (s.includes('tiktok'))   return '🎵';
+  if (s.includes('instagram'))return '📷';
+  if (s.includes('google'))   return '🔍';
   if (s.includes('twitter') || s.includes('x.com')) return '🐦';
-  if (s.includes('signal'))    return '💬';
-  if (s.includes('viber'))     return '🟣';
-  if (s.includes('discord'))   return '🎮';
-  if (s.includes('uber'))      return '🚗';
-  if (s.includes('amazon'))    return '📦';
-  if (s.includes('apple'))     return '🍎';
-  if (s.includes('microsoft') || s.includes('outlook')) return '🪟';
-  return '✉️';
+  return '📡';
 }
-
-// Telegram PREMIUM custom emoji IDs — render as full-color brand logos in clients
-// that support custom emoji. Bots can SEND custom emoji free-of-charge to channels
-// and groups; non-premium users see the fallback unicode emoji automatically.
-// IDs below were extracted from a real OTP feed channel (forwarded message dump).
-function serviceCustomEmoji(svc) {
-  if (!svc) return null;
-  const s = String(svc).toLowerCase();
-  // Map service → unicode brand glyph; then look it up in the icon pack.
-  // IDs from the auto-loaded icon pack (IconsEmoji_JABA) take precedence over
-  // hand-confirmed legacy IDs so a single pack swap updates every service.
-  const HARDCODED = {
-    '📘': '5389064576333527180', // Facebook (confirmed dump)
-    '📱': '5233354831984353090', // WhatsApp (confirmed dump)
-    '✈️': '5364125616801073577', // Telegram (confirmed dump)
-  };
-  let glyph = null;
-  if (s.includes('facebook'))  glyph = '📘';
-  else if (s.includes('whatsapp'))  glyph = '🟢';
-  else if (s.includes('telegram'))  glyph = '✈️';
-  else if (s.includes('tiktok'))    glyph = '🎵';
-  else if (s.includes('instagram')) glyph = '📸';
-  else if (s.includes('google') || s.includes('gmail')) glyph = '🔴';
-  else if (s.includes('twitter') || s.includes('x.com')) glyph = '🐦';
-  if (!glyph) return null;
-  const id = ICON_EMOJI_IDS[glyph] || HARDCODED[glyph] || null;
-  if (!id) return { id: null, fallback: glyph };
-  return { id, fallback: glyph };
-}
-
-// Country flag rendering — delegated to ./flagEmojiMap which holds the full
-// custom-emoji-id table for premium animated flags + automatic unicode fallback
-// for every ISO-3166 country code (so unmapped countries still get a flag).
-// Use `renderFlagHtml(cc)` to produce the ready-to-embed HTML snippet.
 
 // ---------- TG user ensure ----------
 function ensureTgUser(ctx) {
@@ -254,23 +137,20 @@ function isBanned(tgUser) { return tgUser && tgUser.status === 'banned'; }
 
 // ---------- Main menu ----------
 function mainMenuKeyboard() {
-  const billing = isBillingEnabled();
-  const rows = [
+  return Markup.keyboard([
     ['🌍 Get Number', '📞 My Numbers'],
     ['📥 OTP History', '🔍 Active Range Checker'],
-  ];
-  rows.push(billing ? ['💰 Wallet', 'ℹ️ Support'] : ['ℹ️ Support']);
-  return Markup.keyboard(rows).resize();
+    ['💰 Wallet', 'ℹ️ Support'],
+  ]).resize();
 }
 
 function welcomeText(u) {
   const nm = u.first_name || u.username || 'friend';
-  const billing = isBillingEnabled();
   return (
     `<b>👋 Welcome ${escapeHtml(nm)}!</b>\n\n` +
     `🚀 <b>NEXUS X — Number Panel</b>\n` +
     `Fast, reliable virtual numbers for OTP verification.\n\n` +
-    (billing ? `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` : '🎁 <b>FREE access — no balance needed</b>\n') +
+    `💰 Balance: <b>${fmtBdt(u.balance_bdt)}</b>\n` +
     `📊 Total OTPs: <b>${u.total_otps}</b>\n\n` +
     `Tap a button below to begin.`
   );
@@ -372,54 +252,23 @@ function newBatchId() {
 
 // ---------- Country list (only TG-enabled ranges with pool > 0) ----------
 // Country code is inferred from range_name when allocations.country_code is missing
-// Per-provider range_meta tables (from admin RangePoolGrid) — used to honor
-// the new "disabled" toggle so admin-hidden ranges are skipped here too.
-const RANGE_META_TABLES = {
-  numpanel: 'numpanel_range_meta',
-  ims: 'ims_range_meta',
-  msi: 'msi_range_meta',
-  iprn_sms: 'iprn_sms_range_meta',
-};
-
-// Returns Set of "provider::range_name" that admin has disabled.
-function getDisabledRangeKeys() {
-  const disabled = new Set();
-  for (const [provider, table] of Object.entries(RANGE_META_TABLES)) {
-    try {
-      const rows = db.prepare(
-        `SELECT range_prefix FROM ${table} WHERE COALESCE(disabled, 0) = 1`
-      ).all();
-      for (const r of rows) disabled.add(`${provider}::${r.range_prefix}`);
-    } catch {
-      // Table may not exist yet for a provider that hasn't booted — ignore.
-    }
-  }
-  return disabled;
-}
-
 function listCountries() {
   const rows = db.prepare(`
     SELECT a.country_code AS raw_cc, COALESCE(a.operator,'Unknown') AS range_name, COUNT(*) AS cnt
-         , a.provider AS provider, r.service AS service
     FROM allocations a
     JOIN range_tg_settings r
       ON r.provider = a.provider
      AND r.range_name = COALESCE(a.operator, 'Unknown')
     WHERE a.status = 'pool' AND r.tg_enabled = 1
-    GROUP BY a.provider, a.country_code, range_name, r.service
+    GROUP BY a.country_code, range_name
   `).all();
-  const disabled = getDisabledRangeKeys();
   const agg = new Map();
   for (const r of rows) {
-    if (disabled.has(`${r.provider}::${r.range_name}`)) continue;
     const cc = bestCountryCode(r.raw_cc, r.range_name) || 'XX';
-    const cur = agg.get(cc) || { cnt: 0, services: new Set() };
-    cur.cnt += r.cnt;
-    if (r.service) cur.services.add(String(r.service).toLowerCase());
-    agg.set(cc, cur);
+    agg.set(cc, (agg.get(cc) || 0) + r.cnt);
   }
   return Array.from(agg.entries())
-    .map(([code, v]) => ({ code, cnt: v.cnt, services: Array.from(v.services) }))
+    .map(([code, cnt]) => ({ code, cnt }))
     .filter(r => r.cnt > 0)
     .sort((a, b) => b.cnt - a.cnt || a.code.localeCompare(b.code));
 }
@@ -435,9 +284,7 @@ function listRangesForCountry(cc) {
     WHERE a.status = 'pool' AND r.tg_enabled = 1
     GROUP BY a.provider, range_name, a.country_code, r.service, r.tg_rate_bdt
   `).all();
-  const disabled = getDisabledRangeKeys();
   return rows
-    .filter(r => !disabled.has(`${r.provider}::${r.range_name}`))
     .filter(r => (bestCountryCode(r.raw_cc, r.range_name) || 'XX') === cc && r.cnt > 0)
     .sort((a, b) => b.cnt - a.cnt || a.range_name.localeCompare(b.range_name));
 }
@@ -495,7 +342,7 @@ function renderBatchCard(assignments) {
   let txt =
     `📱 <b>Your Numbers (${assignments.length})</b>\n` +
     `${flag} <b>${escapeHtml(cName)}</b> — ${svc}\n` +
-    `${timer} until expiry${isBillingEnabled() ? ` • Rate: ${fmtBdt(head.rate_bdt)} per OTP` : ' • 🎁 FREE'}\n` +
+    `${timer} until expiry • Rate: ${fmtBdt(head.rate_bdt)} per OTP\n` +
     `━━━━━━━━━━━━━━━━━━━━\n`;
 
   assignments.forEach((a, i) => {
@@ -630,9 +477,6 @@ bot.hears('🏆 Leaderboard', async (ctx) => {
 
 bot.hears('💰 Wallet', async (ctx) => {
   const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
-  if (!isBillingEnabled()) {
-    return ctx.replyWithHTML('🎁 <b>Wallet disabled</b> — bot is currently in FREE mode. Enjoy unlimited OTPs!');
-  }
   await showWallet(ctx);
 });
 
@@ -655,83 +499,33 @@ async function showCountries(ctx) {
   if (list.length === 0) {
     return ctx.replyWithHTML('😕 <b>No numbers available right now.</b>\nPlease check back in a few minutes.');
   }
-  const buttons = list.map(c => {
-    const svcIcons = (c.services || []).slice(0, 4).map(s => serviceIcon(s)).join('');
-    const tail = svcIcons ? ` ${svcIcons}` : '';
-    return [Markup.button.callback(
-      `${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}${tail}`,
-      `country:${c.code}`
-    )];
-  });
+  const buttons = list.map(c => [
+    Markup.button.callback(`${flagOf(c.code)} ${countryName(c.code)} — ${c.cnt}`, `country:${c.code}`)
+  ]);
   await ctx.replyWithHTML(
-    `<b>🌍 Available Countries</b>\nTags show available services: <b>FB</b>=Facebook · <b>WA</b>=WhatsApp · <b>TG</b>=Telegram · <b>TT</b>=TikTok · <b>IG</b>=Instagram · <b>GG</b>=Google · <b>SMS</b>=Other`,
+    `<b>🌍 Available Countries</b>\nPick a country to see ranges:`,
     Markup.inlineKeyboard(buttons)
   );
 }
 
-// No-op handler for the "Page X/Y" indicator button (so it doesn't error out)
-bot.action('noop', async (ctx) => { try { await ctx.answerCbQuery(); } catch {} });
-
-bot.action(/^country:(\w+)(?::(\d+))?$/, async (ctx) => {
-  try { await ctx.answerCbQuery(); } catch {}
+bot.action(/^country:(\w+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
   const cc = ctx.match[1];
-  const page = Math.max(1, parseInt(ctx.match[2], 10) || 1);
-  try {
-    const ranges = listRangesForCountry(cc);
-    if (ranges.length === 0) {
-      try { await ctx.editMessageText(`😕 No ranges available for ${countryName(cc)} right now.`); }
-      catch { await ctx.replyWithHTML(`😕 No ranges available for ${countryName(cc)} right now.`); }
-      return;
-    }
-    // Telegram callback_data has a 64-byte limit. Range names can be long
-    // ("Pakistan Pakistan-Cn-01 …") → encode by index instead of name.
-    // Compact button label — flag is already in the header above, so we drop it
-    // here and lead with the service tag (FB/WA/TG…) followed by a trimmed
-    // range name + count + price. Keeps the row readable on mobile.
-    const trim = (s, n) => {
-      const x = String(s || '').replace(/\s+/g, ' ').trim();
-      return x.length > n ? x.slice(0, n - 1) + '…' : x;
-    };
-    const billingOn = isBillingEnabled();
-    // ── Paginate: Telegram refuses huge inline keyboards (BUTTON_DATA_INVALID)
-    //    when the JSON markup exceeds ~10KB. Cap to 40 ranges per page.
-    const PAGE_SIZE = 40;
-    const totalPages = Math.max(1, Math.ceil(ranges.length / PAGE_SIZE));
-    const safePage = Math.min(page, totalPages);
-    const start = (safePage - 1) * PAGE_SIZE;
-    const pageRanges = ranges.slice(start, start + PAGE_SIZE);
-
-    const buttons = pageRanges.map((r, idx) => [
-      // i = absolute index across all ranges so `pick:cc:i` still resolves
-      Markup.button.callback(
-        billingOn
-          ? `${serviceIcon(r.service)} ${trim(r.range_name, 26)} · ${r.cnt} · ${fmtBdt(r.tg_rate_bdt)}`
-          : `${serviceIcon(r.service)} ${trim(r.range_name, 30)} · ${r.cnt} · FREE`,
-        `pick:${cc}:${start + idx}`
-      ),
-    ]);
-    if (totalPages > 1) {
-      const navRow = [];
-      if (safePage > 1)             navRow.push(Markup.button.callback('« Prev', `country:${cc}:${safePage - 1}`));
-      navRow.push(Markup.button.callback(`Page ${safePage}/${totalPages}`, 'noop'));
-      if (safePage < totalPages)    navRow.push(Markup.button.callback('Next »', `country:${cc}:${safePage + 1}`));
-      buttons.push(navRow);
-    }
-    buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
-    const text = `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:` +
-      (totalPages > 1 ? `\n<i>Page ${safePage} of ${totalPages} • ${ranges.length} total ranges</i>` : '');
-    const markup = Markup.inlineKeyboard(buttons).reply_markup;
-    try {
-      await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: markup });
-    } catch (editErr) {
-      // Edit can fail (message too old, identical content, photo msg, etc.) → send fresh
-      console.warn('[tgbot] country edit failed, sending fresh:', editErr.description || editErr.message);
-      await ctx.replyWithHTML(text, { reply_markup: markup });
-    }
-  } catch (e) {
-    console.error('[tgbot] country handler error:', e.message);
-    try { await ctx.reply('⚠️ Something went wrong loading ranges. Tap 🌍 Get Number again.'); } catch {}
+  const ranges = listRangesForCountry(cc);
+  if (ranges.length === 0) {
+    return ctx.editMessageText(`😕 No ranges available for ${countryName(cc)} right now.`);
   }
+  const buttons = ranges.map(r => [
+    Markup.button.callback(
+      `${serviceIcon(r.service)} ${r.range_name} — ${r.cnt} • ${fmtBdt(r.tg_rate_bdt)}`,
+      `range:${r.provider}:${encodeURIComponent(r.range_name)}:${cc}`
+    ),
+  ]);
+  buttons.push([Markup.button.callback('« Back to countries', 'menu:get')]);
+  await ctx.editMessageText(
+    `${flagOf(cc)} <b>${countryName(cc)}</b>\nPick a service/range:`,
+    { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(buttons).reply_markup }
+  );
 });
 
 bot.action('menu:get', async (ctx) => {
@@ -744,28 +538,11 @@ bot.action('menu:mine', async (ctx) => {
 });
 
 bot.action(/^range:([^:]+):([^:]+):(\w+)$/, async (ctx) => {
-  try { await ctx.answerCbQuery('Claiming numbers…'); } catch {}
+  await ctx.answerCbQuery('Claiming numbers…');
   const provider = ctx.match[1];
   const rangeName = decodeURIComponent(ctx.match[2]);
   const cc = ctx.match[3];
-  return claimAndDeliver(ctx, provider, rangeName, cc);
-});
 
-// New compact handler — resolves index → range from the live country list
-bot.action(/^pick:(\w+):(\d+)$/, async (ctx) => {
-  try { await ctx.answerCbQuery('Claiming numbers…'); } catch {}
-  const cc  = ctx.match[1];
-  const idx = +ctx.match[2];
-  const ranges = listRangesForCountry(cc);
-  const r = ranges[idx];
-  if (!r) {
-    try { await ctx.reply('⚠️ This range is no longer in the pool. Tap 🌍 Get Number again.'); } catch {}
-    return;
-  }
-  return claimAndDeliver(ctx, r.provider, r.range_name, cc);
-});
-
-async function claimAndDeliver(ctx, provider, rangeName, cc) {
   const u = ensureTgUser(ctx); if (!u || !(await ensureBotReady(ctx, u))) return;
 
   // Wallet check
@@ -773,17 +550,11 @@ async function claimAndDeliver(ctx, provider, rangeName, cc) {
     'SELECT tg_rate_bdt, service FROM range_tg_settings WHERE provider = ? AND range_name = ? AND tg_enabled = 1'
   ).get(provider, rangeName);
   if (!setting) return ctx.reply('❌ This range is no longer available.');
-  // Honor admin "Hide from agents" toggle from the new RangePoolGrid.
-  if (getDisabledRangeKeys().has(`${provider}::${rangeName}`)) {
-    return ctx.reply('🚫 This range was just disabled by admin. Please pick another.');
-  }
-  const billing = isBillingEnabled();
-  // When billing is OFF globally, force rate=0 so charges + balance check are skipped.
-  const rate = billing ? (setting.tg_rate_bdt || 0) : 0;
+  const rate = setting.tg_rate_bdt || 0;
 
   // We reserve = 1 OTP success worth × batch (refunded if no OTP).
   // For simplicity charge only on OTP arrival, but block if balance < rate.
-  if (billing && rate > 0 && u.balance_bdt < rate) {
+  if (rate > 0 && u.balance_bdt < rate) {
     return ctx.replyWithHTML(
       `💸 <b>Insufficient balance.</b>\nYour balance: ${fmtBdt(u.balance_bdt)}\n` +
       `Each OTP costs: ${fmtBdt(rate)}\nContact admin to top up.`
@@ -827,7 +598,7 @@ async function claimAndDeliver(ctx, provider, rangeName, cc) {
   // Save chat+message id on every row so the poller can edit this one card
   db.prepare('UPDATE tg_assignments SET tg_message_id = ?, tg_chat_id = ? WHERE batch_id = ?')
     .run(sent.message_id, sent.chat.id, batchId);
-}
+});
 
 // ----- Batch release (new) -----
 bot.action(/^releaseBatch:(.+)$/, async (ctx) => {
@@ -840,11 +611,9 @@ bot.action(/^releaseBatch:(.+)$/, async (ctx) => {
     for (const a of rows) {
       if (a.status === 'active') {
         db.prepare("UPDATE tg_assignments SET status='released' WHERE id = ?").run(a.id);
-        // PERMANENT release: once a number was assigned to an agent it must
-        // NEVER reappear in the pool — even if a scraper re-discovers it.
-        // Workers dedupe globally by phone_number so 'released' rows are
-        // treated as already-known and skipped on next scrape.
-        db.prepare("UPDATE allocations SET status='released' WHERE id = ? AND status='active'")
+        // Reset allocated_at so the next claimer (TG or website) gets a clean
+        // expiry window — prevents "instant expired" on subsequent grabs.
+        db.prepare("UPDATE allocations SET status='pool', allocated_at=strftime('%s','now') WHERE id = ? AND status='active'")
           .run(a.allocation_id);
       }
     }
@@ -868,8 +637,7 @@ bot.action(/^release:(\d+)$/, async (ctx) => {
   if (!a || a.status !== 'active') return ctx.reply('Already gone.');
   db.transaction(() => {
     db.prepare("UPDATE tg_assignments SET status='released' WHERE id = ?").run(id);
-    // Permanent release — see releaseBatch handler for rationale.
-    db.prepare("UPDATE allocations SET status='released' WHERE id = ? AND status='active'").run(a.allocation_id);
+    db.prepare("UPDATE allocations SET status='pool', allocated_at=strftime('%s','now') WHERE id = ? AND status='active'").run(a.allocation_id);
   })();
   try { await ctx.editMessageText('🗑 Released. Number returned to pool.'); } catch {}
 });
@@ -930,13 +698,9 @@ async function showLeaderboard(ctx) {
     GROUP BY country_code ORDER BY cnt DESC LIMIT 5
   `).all(since);
   const topRanges = db.prepare(`
-    SELECT c.country_code, c.operator AS range_name, c.provider, COUNT(*) cnt,
-           (SELECT service FROM range_tg_settings r
-              WHERE r.provider = c.provider AND r.range_name = COALESCE(c.operator,'Unknown') LIMIT 1) AS service
-    FROM cdr c
-    WHERE c.status = 'billed' AND c.created_at >= ?
-    GROUP BY c.country_code, c.operator, c.provider
-    ORDER BY cnt DESC LIMIT 8
+    SELECT country_code, operator AS range_name, COUNT(*) cnt FROM cdr
+    WHERE status = 'billed' AND created_at >= ?
+    GROUP BY country_code, operator ORDER BY cnt DESC LIMIT 8
   `).all(since);
   // Total counter (real + boost combined)
   const totalRow = db.prepare(`
@@ -954,8 +718,7 @@ async function showLeaderboard(ctx) {
   txt += `\n<b>📊 Top Active Ranges</b>\n`;
   if (topRanges.length === 0) txt += '<i>No data yet</i>\n';
   else topRanges.forEach((r, i) => {
-    const svc = r.service ? `${serviceIcon(r.service)} ` : '';
-    txt += `${i + 1}. ${flagOf(r.country_code)} ${svc}${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
+    txt += `${i + 1}. ${flagOf(r.country_code)} ${escapeHtml(r.range_name || '—')} — <b>${r.cnt}</b>\n`;
   });
   txt += `\n<i>Tip: pick a hot range above for higher OTP delivery rates.</i>`;
   await ctx.replyWithHTML(txt);
@@ -987,17 +750,6 @@ async function showWallet(ctx) {
 // ============================================================
 
 let lastOtpScanAt = now();
-// Separate cursor for the UNIVERSAL feed forwarder — covers website-agent OTPs,
-// telegram-bot OTPs, and any provider that writes to allocations.otp directly.
-let lastFeedScanAt = now();
-const recentlyForwarded = new Map(); // allocation_id → timestamp (auto-pruned)
-function markForwarded(id) {
-  recentlyForwarded.set(id, now());
-  if (recentlyForwarded.size > 5000) {
-    const cutoff = now() - 3600;
-    for (const [k, v] of recentlyForwarded) if (v < cutoff) recentlyForwarded.delete(k);
-  }
-}
 
 function mirrorOtpToWebsite(c) {
   let sysUser = db.prepare("SELECT id FROM users WHERE username = '__ims_pool__'").get();
@@ -1023,103 +775,23 @@ function mirrorOtpToWebsite(c) {
 }
 
 async function postPublicOtp(c) {
-  // Post to BOTH the OTP feed group (if configured) and the public channel.
-  const feedId = getOtpFeedChatId();
-  const pubId  = getPublicChannelId();
-  const targets = [...new Set([feedId, pubId].filter(Boolean))];
-  if (targets.length === 0) {
-    console.warn('[tgbot] postPublicOtp: no tg_otp_feed_chat or tg_public_channel configured — OTP not forwarded');
-    return;
-  }
-  // ── Screenshot-style format ─────────────────────────────────────────
-  // Header (BN): "কি এটা কি তোমার"
-  // Line 1: 🇨🇨 CC • [SVC] <masked-number> • <Service>
-  // Line 2: full OTP wrapped in spoiler (<tg-spoiler>) so users tap to reveal
-  // Inline keyboard: single "‼️ Bot" button — no Support button.
-  const cc = (c.country_code || '').toUpperCase();
-  const svcRaw = c.service || c.range_name || 'SMS';
-  const svcLabel = String(svcRaw).replace(/[_\-]+/g, ' ').trim();
-  const svcTag = serviceIcon(svcRaw);
-  const svcEmoji = serviceEmoji(svcRaw) || '✉️';
-
-  // ── Guaranteed-fallback emoji renderer ────────────────────────────────
-  // Wraps in <tg-emoji> ONLY when we have BOTH a non-empty id AND a non-empty
-  // unicode fallback glyph. If anything is missing/broken we emit the plain
-  // unicode emoji so the message body always shows SOMETHING, even when the
-  // sticker pack failed to load or returned malformed IDs.
-  const safeCustom = (id, fallback) => {
-    const fb = String(fallback || '').trim();
-    if (!fb) return ''; // truly nothing to show
-    const cleanId = String(id || '').trim();
-    if (!cleanId || !/^\d+$/.test(cleanId)) return fb; // bad id → unicode only
-    return `<tg-emoji emoji-id="${cleanId}">${fb}</tg-emoji>`;
-  };
-
-  // Flag — try premium ID, but ALWAYS fall through to unicode regional flag
-  // (and 🏳️ as last-resort) so the line never starts with empty space.
-  let flagBrand;
-  try {
-    const f = getFlagEmoji(cc);
-    flagBrand = safeCustom(f.id, f.fallback) || f.fallback || '🏳️';
-  } catch {
-    flagBrand = '🏳️';
-  }
-
-  // Service brand emoji — same guarantee, falls back to ✉️ if everything fails.
-  let svcBrand;
-  try {
-    const sc = serviceCustomEmoji(svcRaw);
-    svcBrand = sc ? safeCustom(sc.id, sc.fallback || svcEmoji) : svcEmoji;
-    if (!svcBrand) svcBrand = svcEmoji || '✉️';
-  } catch {
-    svcBrand = svcEmoji || '✉️';
-  }
+  const chatId = getPublicChannelId();
+  if (!chatId) return;
   const maskedNumber = maskLast4(c.phone_number);
-  const otpFull = String(c.otp || '').trim();
-
+  const otpMasked = maskLast4(c.otp);
   const msg =
-    `<b>Nexus X Number Panel</b>\n` +
-    `${flagBrand} <b>${escapeHtml(cc || '??')}</b> • ${svcBrand} <code>${escapeHtml(maskedNumber)}</code> • <b>${escapeHtml(svcLabel)}</b>`;
-
-  // Inline keyboard — row 1: copy-OTP button (tap to copy code to clipboard).
-  // row 2: Bot link only (Support removed per spec).
-  const botUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
-  const rows = [];
-  if (otpFull) {
-    // Telegram "copy_text" button — when user taps, the OTP is copied to clipboard.
-    // We display dots so the code stays hidden until copy.
-    rows.push([{ text: ' •••••••• ', copy_text: { text: otpFull } }]);
-  }
-  // Bottom action row — Bot link + universal Support link (nexus-x.site).
-  // Inline-keyboard button labels do NOT support <tg-emoji> custom emoji
-  // (Telegram strips HTML in button text), so we use unicode glyphs that look
-  // identical to the icon pack on premium clients via the message body.
-  const actionRow = [];
-  if (botUrl) actionRow.push({ text: '‼️ Bot Pnl', url: botUrl });
-  actionRow.push({ text: '♻️ All Support', url: SITE_URL });
-  rows.push(actionRow);
-  const reply_markup = rows.length ? { inline_keyboard: rows } : undefined;
-
-  for (const chatId of targets) {
-    try {
-      await bot.telegram.sendMessage(chatId, msg, {
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        ...(reply_markup ? { reply_markup } : {}),
-      });
-      console.log(`[tgbot] OTP forwarded → chat=${chatId} num=${c.phone_number}`);
-    } catch (e) {
-      console.error(`[tgbot] OTP forward FAIL chat=${chatId} err=${e.message} desc=${e.description || '—'}. ` +
-        `Hint: bot must be ADMIN in the group/channel; channel must be public OR you must use the numeric -100… chat id (private invite +hash links DO NOT work).`);
-    }
-  }
+    `🔥 <b>New OTP Received</b>\n` +
+    `📱 <code>${maskedNumber}</code>\n` +
+    `🔐 <code>${otpMasked}</code>\n` +
+    `${flagOf(c.country_code)} ${escapeHtml(countryName(c.country_code))} • ${serviceIcon(c.service)} ${escapeHtml(c.range_name || c.service || 'OTP')}`;
+  await bot.telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
 }
 
 async function pollOtps() {
   try {
     // Find allocations that received OTP since last scan AND have an active TG assignment
     const candidates = db.prepare(`
-      SELECT t.id AS assignment_id, a.id AS allocation_id, t.tg_user_id, t.tg_chat_id, t.tg_message_id,
+      SELECT t.id AS assignment_id, t.tg_user_id, t.tg_chat_id, t.tg_message_id,
              t.phone_number, t.country_code, t.service, t.range_name, t.rate_bdt,
              t.expires_at, a.otp, a.cli, a.otp_received_at
       FROM tg_assignments t
@@ -1131,7 +803,6 @@ async function pollOtps() {
     lastOtpScanAt = now();
 
     for (const c of candidates) {
-     try {
       // mark assignment as otp_received + bill the user (if rate > 0)
       const updated = db.prepare(`
         UPDATE tg_assignments
@@ -1140,31 +811,20 @@ async function pollOtps() {
       `).run(c.otp, c.cli || c.otp, c.otp_received_at || now(), c.assignment_id);
       if (updated.changes !== 1) continue;
 
-      markForwarded(c.allocation_id ? `alloc:${c.allocation_id}` : `tg:${c.assignment_id}`);
-
       // bill
-      if (isBillingEnabled() && c.rate_bdt > 0) {
-        // Verify user exists before billing — prevents FOREIGN KEY errors
-        // when an assignment exists for a user that was deleted/expired.
-        const userExists = db.prepare('SELECT 1 FROM tg_users WHERE tg_user_id = ?').get(c.tg_user_id);
-        if (userExists) {
-          db.transaction(() => {
-            db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
-              .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
-            db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
-              .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
-          })();
-        } else {
-          console.warn(`[tgbot] skip billing — tg_user ${c.tg_user_id} no longer exists (assignment ${c.assignment_id})`);
-        }
+      if (c.rate_bdt > 0) {
+        db.transaction(() => {
+          db.prepare('UPDATE tg_users SET balance_bdt = balance_bdt - ?, total_otps = total_otps + 1, total_spent = total_spent + ? WHERE tg_user_id = ?')
+            .run(c.rate_bdt, c.rate_bdt, c.tg_user_id);
+          db.prepare('INSERT INTO tg_wallet_tx (tg_user_id, amount_bdt, type, ref_id, note) VALUES (?, ?, ?, ?, ?)')
+            .run(c.tg_user_id, -c.rate_bdt, 'deduct', c.assignment_id, `OTP success ${c.phone_number}`);
+        })();
       } else {
-        try {
-          db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
-        } catch (_) { /* user may not exist */ }
+        db.prepare('UPDATE tg_users SET total_otps = total_otps + 1 WHERE tg_user_id = ?').run(c.tg_user_id);
       }
 
        mirrorOtpToWebsite(c);
-       await postPublicOtp(c).catch((e) => console.error('[tgbot] postPublicOtp threw:', e.message));
+       await postPublicOtp(c).catch(() => {});
 
        const batchId = db.prepare('SELECT batch_id FROM tg_assignments WHERE id = ?').get(c.assignment_id)?.batch_id || null;
        const batchRows = batchId ? getBatchAssignments(batchId) : [];
@@ -1207,10 +867,6 @@ async function pollOtps() {
         );
       } catch {}
       console.log(`[tgbot] OTP delivered → tg=${c.tg_user_id} num=${c.phone_number} otp=${c.otp}`);
-     } catch (perRowErr) {
-       console.error(`[tgbot] pollOtps row failed (assignment=${c.assignment_id}):`, perRowErr.message);
-       continue;
-     }
     }
   } catch (e) {
     console.error('[tgbot] pollOtps error:', e.message);
@@ -1227,52 +883,14 @@ function expireOldAssignments() {
       WHERE status = 'active' AND expires_at < ?
     `).all(now());
     if (expired.length === 0) return;
-    // Collect impacted batches BEFORE we mutate, so we can refresh their TG cards.
-    const expiredIds = expired.map(e => e.id);
-    const placeholders = expiredIds.map(() => '?').join(',');
-    const impactedBatches = db.prepare(
-      `SELECT DISTINCT batch_id FROM tg_assignments WHERE id IN (${placeholders}) AND batch_id IS NOT NULL`
-    ).all(...expiredIds).map(r => r.batch_id);
-
     const txn = db.transaction(() => {
       for (const e of expired) {
         db.prepare("UPDATE tg_assignments SET status='expired' WHERE id = ?").run(e.id);
-        // Permanent expire — number is "burned" once handed out, never re-pooled.
-        db.prepare("UPDATE allocations SET status='expired' WHERE id = ? AND status='active'").run(e.allocation_id);
+        db.prepare("UPDATE allocations SET status='pool', allocated_at=strftime('%s','now') WHERE id = ? AND status='active'").run(e.allocation_id);
       }
     });
-    txn.immediate();
-    console.log(`[tgbot] expired ${expired.length} unused number(s) → permanently retired (will not re-pool)`);
-
-    // Auto-vanish expired numbers from the user's TG batch cards.
-    // For each impacted batch: if EVERY row is expired/released and none received OTP,
-    // delete the message entirely. Otherwise re-render so live OTPs stay visible
-    // and expired ones disappear (status='expired' rows are filtered out).
-    for (const batchId of impactedBatches) {
-      try {
-        const rows = getBatchAssignments(batchId);
-        if (rows.length === 0) continue;
-        const head = rows[0];
-        if (!head.tg_chat_id || !head.tg_message_id) continue;
-
-        const liveRows = rows.filter(a => a.status === 'active' || a.status === 'otp_received');
-        const hasOtp   = rows.some(a => a.status === 'otp_received' && a.otp_code);
-
-        if (liveRows.length === 0 && !hasOtp) {
-          // Nothing useful left → just delete the card so it vanishes from chat.
-          bot.telegram.deleteMessage(head.tg_chat_id, head.tg_message_id).catch(() => {});
-        } else {
-          // Re-render the card showing only live + OTP rows (drop expired).
-          const visible = rows.filter(a => a.status !== 'expired' && a.status !== 'released');
-          const allDone = !visible.some(a => a.status === 'active');
-          bot.telegram.editMessageText(
-            head.tg_chat_id, head.tg_message_id, undefined,
-            renderBatchCard(visible),
-            { parse_mode: 'HTML', reply_markup: batchKeyboard(batchId, allDone).reply_markup }
-          ).catch(() => {});
-        }
-      } catch (e) { console.warn('[tgbot] batch refresh fail:', e.message); }
-    }
+    txn();
+    console.log(`[tgbot] expired ${expired.length} unused number(s) → returned to pool`);
   } catch (e) {
     console.error('[tgbot] expire error:', e.message);
   }
@@ -1286,52 +904,24 @@ async function processBroadcasts() {
   if (!pending) return;
   db.prepare("UPDATE tg_broadcasts SET status='sending' WHERE id = ?").run(pending.id);
   const users = db.prepare("SELECT tg_user_id FROM tg_users WHERE status = 'active'").all();
-  console.log(`[tgbot] broadcast #${pending.id} starting → ${users.length} active users`);
   let sent = 0, failed = 0;
-  const parseMode = pending.parse_mode || 'HTML';
-
-  // Mirror to public channel/group if configured (so even non-DM users see it)
-  const channelId = getPublicChannelId();
-  if (channelId) {
-    try {
-      await bot.telegram.sendMessage(channelId, pending.message, { parse_mode: parseMode, disable_web_page_preview: false });
-      console.log(`[tgbot] broadcast #${pending.id} mirrored to channel ${channelId}`);
-    } catch (e) {
-      console.warn(`[tgbot] broadcast channel mirror failed (${channelId}):`, e.description || e.message);
-    }
-  }
-
   for (const u of users) {
-    let attempt = 0;
-    while (attempt < 3) {
-      try {
-        await bot.telegram.sendMessage(u.tg_user_id, pending.message, { parse_mode: parseMode });
-        sent++;
-        break;
-      } catch (e) {
-        const code = e.code || e.response?.error_code;
-        const retryAfter = e.parameters?.retry_after || e.response?.parameters?.retry_after;
-        // Telegram flood control — wait + retry
-        if (code === 429 && retryAfter) {
-          console.warn(`[tgbot] flood — sleeping ${retryAfter}s`);
-          await new Promise(r => setTimeout(r, (retryAfter + 1) * 1000));
-          attempt++;
-          continue;
-        }
-        // 403 = user blocked bot; 400 = user deactivated / chat not found
-        if (code === 403) {
-          db.prepare("UPDATE tg_users SET status='banned' WHERE tg_user_id = ?").run(u.tg_user_id);
-        }
-        failed++;
-        break;
+    try {
+      await bot.telegram.sendMessage(u.tg_user_id, pending.message, { parse_mode: pending.parse_mode || 'HTML' });
+      sent++;
+      // 30 msg/sec rate limit
+      await new Promise(r => setTimeout(r, 35));
+    } catch (e) {
+      failed++;
+      // If user blocked the bot, mark them inactive
+      if (e.code === 403) {
+        db.prepare("UPDATE tg_users SET status='banned' WHERE tg_user_id = ?").run(u.tg_user_id);
       }
     }
-    // 30 msg/sec safety throttle
-    await new Promise(r => setTimeout(r, 40));
   }
   db.prepare("UPDATE tg_broadcasts SET status='done', sent_count=?, failed_count=?, finished_at=? WHERE id = ?")
     .run(sent, failed, now(), pending.id);
-  console.log(`[tgbot] broadcast #${pending.id} done: sent=${sent} failed=${failed} (channel=${channelId || 'none'})`);
+  console.log(`[tgbot] broadcast #${pending.id} done: sent=${sent} failed=${failed}`);
 }
 
 // ============================================================
@@ -1377,16 +967,11 @@ function genFakeOtp() {
 }
 
 function getOrCreateFakeUserId() {
-  // Display name surfaces on the public leaderboard while fake OTP broadcaster
-  // is running, so observers see "Nexus TG bot" actively receiving OTPs.
   let u = db.prepare("SELECT id FROM users WHERE username = '__fake_broadcast__'").get();
   if (!u) {
     const r = db.prepare(`INSERT INTO users (username, password_hash, role, status, full_name)
-      VALUES ('__fake_broadcast__', '!', 'agent', 'active', 'Nexus TG bot')`).run();
+      VALUES ('__fake_broadcast__', '!', 'agent', 'suspended', 'Fake Broadcast (system)')`).run();
     u = { id: r.lastInsertRowid };
-  } else {
-    // Keep legacy rows in sync with the new display name + active status.
-    db.prepare(`UPDATE users SET full_name = 'Nexus TG bot', status = 'active' WHERE id = ?`).run(u.id);
   }
   return u.id;
 }
@@ -1462,118 +1047,18 @@ bot.catch((err, ctx) => {
   console.error(`[tgbot] error for ${ctx.updateType}:`, err);
 });
 
-// ============================================================
-// UNIVERSAL OTP FEED FORWARDER
-// Posts every freshly-received OTP to @nexusxotpfeed (or whatever
-// `tg_otp_feed_chat` is set to), regardless of source — website agents,
-// telegram bot users, anything that writes allocations.otp.
-// pollOtps() already forwards bot-claimed OTPs; this catches the rest.
-// ============================================================
-async function feedForwardAllOtps() {
-  try {
-    const feedId = getOtpFeedChatId();
-    const pubId  = getPublicChannelId();
-    const targets = [...new Set([feedId, pubId].filter(Boolean))];
-    if (targets.length === 0) return; // nothing configured
-
-    const rows = db.prepare(`
-      SELECT id, phone_number, otp, cli, operator AS range_name,
-             country_code, otp_received_at, provider
-      FROM allocations
-      WHERE otp IS NOT NULL AND otp != ''
-        AND otp_received_at IS NOT NULL
-        AND otp_received_at >= ?
-      ORDER BY otp_received_at ASC
-      LIMIT 50
-    `).all(lastFeedScanAt - 5);
-    lastFeedScanAt = now();
-
-    for (const r of rows) {
-      const dedupeKey = `alloc:${r.id}`;
-      if (recentlyForwarded.has(dedupeKey)) continue;
-      markForwarded(dedupeKey);
-      // Try to derive a clean service label from cli/range
-      const svcRaw = r.cli || r.range_name || 'SMS';
-      const svc = String(svcRaw).split(/[\s\-_:]/)[0].toUpperCase();
-      await postPublicOtp({
-        phone_number: r.phone_number,
-        otp: r.otp,
-        country_code: r.country_code,
-        service: svc,
-        range_name: r.range_name,
-      }).catch((e) => console.error('[tgbot] feedForward post fail:', e.message));
-    }
-  } catch (e) {
-    console.error('[tgbot] feedForwardAllOtps error:', e.message);
-  }
-}
-
 (async () => {
   try {
     // Make sure no webhook is set (we use polling)
     await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
     const me = await bot.telegram.getMe();
-    BOT_USERNAME = me.username || BOT_USERNAME;
     console.log(`✓ NEXUS X tgbot launching as @${me.username} (${me.id})`);
-    // Auto-load the public "FlagsByKoylli" custom emoji pack so EVERY country
-    // (200+) gets the premium animated flag without us hand-copying IDs.
-    // Override with env var TG_FLAG_PACK if you want a different pack.
-    const flagPack = process.env.TG_FLAG_PACK || 'FlagsByKoylli';
-    const added = await loadFlagPack(bot, flagPack);
-    const mappedFlags = Object.keys(FLAG_EMOJI_IDS).length;
-    console.log(`✓ Country flag custom emoji: ${mappedFlags} total (${added} auto-loaded from pack "${flagPack}") · unmapped countries render as unicode flag fallback`);
-    // Icon pack — generic premium custom emoji for service/UI glyphs (‼️ ♻️ 📘 🟢 …).
-    // Override with env var TG_ICON_PACK if you switch packs.
-    const iconPack = process.env.TG_ICON_PACK || 'IconsEmoji_JABA';
-    const iconAdded = await loadIconPack(bot, iconPack);
-    const mappedIcons = Object.keys(ICON_EMOJI_IDS).length;
-    console.log(`✓ Icon custom emoji: ${mappedIcons} total (${iconAdded} auto-loaded from pack "${iconPack}") · falls back to plain unicode for non-premium users`);
     bot.launch({ dropPendingUpdates: false });
-
-    // ── Auto-resolve OTP feed channel chat_id ─────────────────────────
-    // We seed @nexusxotpfeed as the default username. On boot we ask
-    // Telegram for its real numeric chat id (-100…) and persist it,
-    // so private channels and edge-cases also work without manual setup.
-    (async () => {
-      const candidates = [
-        getOtpFeedChatId(),
-        getPublicChannelId(),
-      ].filter(Boolean);
-      const seen = new Set();
-      for (const handle of candidates) {
-        if (seen.has(handle)) continue;
-        seen.add(handle);
-        try {
-          const chat = await bot.telegram.getChat(handle);
-          console.log(`✓ OTP feed channel resolved → handle="${handle}" id=${chat.id} title="${chat.title || chat.username || '?'}" type=${chat.type}`);
-          // Persist numeric id alongside the username for resilience.
-          if (handle === getOtpFeedChatId()) {
-            db.prepare(
-              `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
-            ).run('tg_otp_feed_chat_id', String(chat.id));
-          }
-          // Probe admin status to surface permission errors EARLY.
-          try {
-            const member = await bot.telegram.getChatMember(chat.id, me.id);
-            const ok = ['administrator', 'creator'].includes(member.status);
-            console.log(`  ↳ bot status in ${handle}: ${member.status}${ok ? ' ✅' : ' ⚠️ NOT ADMIN — OTPs will fail to post'}`);
-          } catch (e) {
-            console.warn(`  ↳ getChatMember failed for ${handle}: ${e.message}`);
-          }
-        } catch (e) {
-          console.error(`✗ OTP feed channel UNREACHABLE: handle="${handle}" — ${e.message}. ` +
-            `Hint: bot must be added as ADMIN to ${handle} with "Post Messages" permission.`);
-        }
-      }
-    })().catch((e) => console.error('[tgbot] feed resolve outer err:', e.message));
-
     setInterval(pollOtps, 4000);
-    setInterval(expireOldAssignments, 30_000);
-    setInterval(feedForwardAllOtps, 5000);
+    setInterval(expireOldAssignments, 60_000);
     setInterval(processBroadcasts, 5_000);
     scheduleNextFakeTick();
-    console.log('✓ OTP poller (4s) + expiry janitor (30s, auto-vanish) + broadcast worker (5s) + fake-OTP broadcaster (toggle) started');
+    console.log('✓ OTP poller (4s) + expiry janitor (60s) + broadcast worker (5s) + fake-OTP broadcaster (toggle) started');
   } catch (e) {
     console.error('FATAL: bot launch failed:', e.message);
     process.exit(1);

@@ -5,22 +5,8 @@ const { logFromReq } = require('../lib/audit');
 const providers = require('../providers');
 const { agentPayout } = require('../lib/commission');
 const { getOtpExpirySec, getRecentOtpHours } = require('../lib/settings');
-const { bestCountryCode, countryName: cnFromCC } = require('../lib/countryInfer');
 
 const router = express.Router();
-
-// Soft-OFF gate — single source of truth for "is this provider enabled?".
-// Mirrors the logic in /providers below so the agent UI list and the
-// number-allocation endpoint can NEVER drift apart. acchub is API-only
-// (no toggle); everything else is opt-in via settings table or env var.
-function isProviderEnabled(id) {
-  if (id === 'acchub') return true;
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
-  const dbVal = row?.value;
-  const envVal = process.env[`${id.toUpperCase()}_ENABLED`];
-  const raw = dbVal ?? envVal ?? 'false';
-  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
-}
 
 // GET /api/numbers/config — shared live-number timing config used by website
 // countdown + auto-release logic. We also return server_now so the frontend can
@@ -37,16 +23,15 @@ router.get('/config', authRequired, (req, res) => {
 // dead options (and we don't waste bandwidth listing empty pools).
 router.get('/providers', authRequired, (req, res) => {
   const all = providers.list();
-  const enabled = all.filter((p) => isProviderEnabled(p.id));
-  // Append a virtual "all" provider when at least 2 manual-pool providers are enabled,
-  // so the agent can pick from a unified pool spanning every bot.
-  const POOL_PROVIDERS = ['ims', 'msi', 'iprn', 'iprn_sms', 'numpanel'];
-  const enabledPool = enabled.filter((p) => POOL_PROVIDERS.includes(p.id));
-  const out = enabled.slice();
-  if (enabledPool.length >= 2) {
-    out.push({ id: 'all', name: 'All Servers', mode: 'manual' });
-  }
-  res.json({ providers: out });
+  const isEnabled = (id) => {
+    if (id === 'acchub') return true; // acchub is API-only, no toggle
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`${id}_enabled`);
+    const dbVal = row?.value;
+    const envVal = process.env[`${id.toUpperCase()}_ENABLED`];
+    const raw = dbVal ?? envVal ?? 'false';
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+  };
+  res.json({ providers: all.filter((p) => isEnabled(p.id)) });
 });
 
 // GET /api/numbers/countries/:provider
@@ -85,92 +70,6 @@ router.get('/msi/ranges', authRequired, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/numbers/all/ranges — UNION of every manual-pool provider's ranges,
-// labelled with the country prefix + provider tag so the agent can pick from
-// any bot's pool in one place. The `key` field is `<providerId>::<rangeName>`
-// and is what the agent should pass back as `range` when calling /numbers/get
-// with provider='all'. The display `name` is "Country — Range (Server X)".
-router.get('/all/ranges', authRequired, async (req, res) => {
-  const POOL_LABELS = {
-    ims: 'Server B', msi: 'Server C', numpanel: 'Server D',
-    iprn: 'Server E', iprn_sms: 'Server F', iprn_sms_v2: 'Server F2',
-    seven1tel: 'Server G',
-  };
-  try {
-    const out = [];
-    // "Hot" detection: ranges with the most agent allocations in the past 1h.
-    // We expose a simple boolean per (provider,range) so the UI can show 🔥
-    // — keeps the cost on the agent side cheap (no second round-trip).
-    let hotSet = new Set();
-    try {
-      const sinceTs = Math.floor(Date.now() / 1000) - 3600;
-      const hotRows = db.prepare(
-        "SELECT provider, COALESCE(operator,'Unknown') AS op, COUNT(*) AS c \
-         FROM allocations \
-         WHERE allocated_at >= ? AND status != 'pool' \
-         GROUP BY provider, op \
-         HAVING c >= 3 \
-         ORDER BY c DESC \
-         LIMIT 50"
-      ).all(sinceTs);
-      hotSet = new Set(hotRows.map((r) => `${r.provider}::${r.op}`));
-    } catch (_) {}
-    for (const pid of Object.keys(POOL_LABELS)) {
-      if (!isProviderEnabled(pid)) continue;
-      let p;
-      try { p = providers.get(pid); } catch (_) { continue; }
-      let ranges = [];
-      try { ranges = await p.listRanges(); } catch (_) { continue; }
-      for (const r of ranges || []) {
-        if (!r || !r.name || !r.count) continue;
-        // Try to get a representative country for this range from the pool table.
-        // Falls back to whatever the range name already contains.
-        let country = null;
-        let countryName = null;
-        try {
-          const row = db.prepare(
-            "SELECT country_code FROM allocations WHERE provider=? AND status='pool' AND COALESCE(operator,'Unknown')=? AND country_code IS NOT NULL LIMIT 1"
-          ).get(pid, r.name);
-          country = row?.country_code || null;
-        } catch (_) {}
-        // Final fallback: infer ISO-2 from the range/operator NAME itself
-        // (e.g. "Tajikistan Babilon TJ02" → "TJ"). Ensures every bot's pool
-        // has a country bucket even when allocations row lacks country_code.
-        if (!country) country = bestCountryCode(null, r.name);
-        // Best-effort country name lookup from the rates table (every provider
-        // imports their country list there). Falls back to the static
-        // ISO→name map so agents always see "Philippines" instead of "PH".
-        if (country) {
-          try {
-            const cn = db.prepare(
-              "SELECT country_name FROM rates WHERE provider=? AND country_code=? AND country_name IS NOT NULL LIMIT 1"
-            ).get(pid, country);
-            countryName = cn?.country_name || null;
-          } catch (_) {}
-          if (!countryName) countryName = cnFromCC(country);
-        }
-        const label = country
-          ? `${country} — ${r.name} (${POOL_LABELS[pid]})`
-          : `${r.name} (${POOL_LABELS[pid]})`;
-        out.push({
-          key: `${pid}::${r.name}`,
-          name: label,
-          range: r.name,
-          provider: pid,
-          provider_label: POOL_LABELS[pid],
-          country_code: country,
-          country_name: countryName,
-          count: r.count,
-          hot: hotSet.has(`${pid}::${r.name}`),
-        });
-      }
-    }
-    // Sort by country then range name so related entries cluster together
-    out.sort((a, b) => (a.country_code || 'zz').localeCompare(b.country_code || 'zz') || a.name.localeCompare(b.name));
-    res.json({ ranges: out });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // POST /api/numbers/get — agent allocates a fresh number
 router.post('/get', authRequired, async (req, res) => {
   try {
@@ -203,45 +102,8 @@ router.post('/get', authRequired, async (req, res) => {
     }
 
     let provider;
-    let effectiveProviderId = providerId;
-    let effectiveRange = range;
-    // Virtual "all" provider — decode `range` ("<providerId>::<rangeName>")
-    // and dispatch to the underlying pool provider. This lets the agent pick
-    // from any bot's pool without us needing per-provider UI logic.
-    if (providerId === 'all') {
-      const raw = (range || '').toString();
-      const [pid, ...rest] = raw.split('::');
-      const rname = rest.join('::');
-      if (!pid || !rname) {
-        return res.status(400).json({ error: 'Invalid range key for All Servers — expected "<provider>::<range>"' });
-      }
-      if (!isProviderEnabled(pid)) {
-        return res.status(403).json({
-          code: 'PROVIDER_DISABLED', provider: pid,
-          error: `Underlying provider ${pid} is disabled.`,
-          allocated: [], errors: [],
-        });
-      }
-      effectiveProviderId = pid;
-      effectiveRange = rname;
-    }
-    try { provider = providers.get(effectiveProviderId); }
+    try { provider = providers.get(providerId); }
     catch (e) { return res.status(400).json({ error: e.message }); }
-
-    // Soft-OFF guard — admin disabled this provider. Defense-in-depth: even
-    // if the agent UI somehow shows a stale option, we refuse here so a
-    // disabled bot can never allocate numbers (and we don't waste a poll).
-    if (!isProviderEnabled(effectiveProviderId)) {
-      return res.status(403).json({
-        // Machine-readable code so the UI can switch on it directly
-        // instead of fragile regex on the human-readable `error` string.
-        code: 'PROVIDER_DISABLED',
-        provider: effectiveProviderId,
-        provider_name: provider.name || effectiveProviderId,
-        error: `${provider.name || effectiveProviderId} is currently disabled by admin. Please pick another source.`,
-        allocated: [], errors: [],
-      });
-    }
 
     // Phase 1 — fetch numbers from provider in parallel (with concurrency cap
     // so we don't hammer the upstream / IMS pool with 100 simultaneous gets).
@@ -250,7 +112,7 @@ router.post('/get', authRequired, async (req, res) => {
     const CONCURRENCY = 10;
     const fetchOne = () => provider.getNumber({
       countryId: country_id, operatorId: operator_id,
-      countryCode: country_code, operator, range: effectiveRange,
+      countryCode: country_code, operator, range,
     });
     const fetched = []; // [{ ok: true, r } | { ok: false, msg }]
     let cursor = 0;
@@ -291,15 +153,15 @@ router.post('/get', authRequired, async (req, res) => {
           upPool.run(userId, r.__pool_id);
           id = r.__pool_id;
         } else {
-          const result = insAlloc.run(userId, effectiveProviderId, r.provider_ref || null, r.phone_number, r.operator || null, r.country_code || null);
+          const result = insAlloc.run(userId, providerId, r.provider_ref || null, r.phone_number, r.operator || null, r.country_code || null);
           id = result.lastInsertRowid;
         }
         allocated.push({ id, phone_number: r.phone_number, operator: r.operator, otp: null, status: 'active' });
       }
     });
-    writeAll.immediate();
+    writeAll();
 
-    logFromReq(req, 'allocation', { meta: { provider: effectiveProviderId, requested_via: providerId, count: allocated.length, errors: errors.length, errorDetails: errors.slice(0, 3) } });
+    logFromReq(req, 'allocation', { meta: { provider: providerId, count: allocated.length, errors: errors.length, errorDetails: errors.slice(0, 3) } });
     res.json({ allocated, errors });
   } catch (fatal) {
     // Final safety net — don't let ANY exception bubble up as 500
@@ -540,7 +402,7 @@ router.post('/ims/pool', authRequired, adminOnly, (req, res) => {
       added++;
     }
   });
-  tx.immediate(numbers);
+  tx(numbers);
   logFromReq(req, 'ims_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
   res.json({ added, skipped, invalid, range: rangeName });
 });
@@ -581,45 +443,8 @@ router.post('/msi/pool', authRequired, adminOnly, (req, res) => {
       added++;
     }
   });
-  tx.immediate(numbers);
+  tx(numbers);
   logFromReq(req, 'msi_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
-  res.json({ added, skipped, invalid, range: rangeName });
-});
-
-// POST /api/numbers/seven1tel/pool — admin adds numbers manually to Seven1Tel pool
-router.post('/seven1tel/pool', authRequired, adminOnly, (req, res) => {
-  const { numbers, country_code, operator, range } = req.body || {};
-  const rangeName = (range || operator || '').toString().trim();
-  if (!Array.isArray(numbers) || !numbers.length) return res.status(400).json({ error: 'numbers[] required' });
-  if (!rangeName) return res.status(400).json({ error: 'range name required' });
-
-  let sysUser = db.prepare("SELECT id FROM users WHERE username = '__seven1tel_pool__'").get();
-  if (!sysUser) {
-    const r = db.prepare(`INSERT INTO users (username, password_hash, role, status) VALUES ('__seven1tel_pool__', '!', 'agent', 'suspended')`).run();
-    sysUser = { id: r.lastInsertRowid };
-  }
-
-  const exists = db.prepare(`
-    SELECT 1 FROM allocations WHERE provider='seven1tel' AND phone_number=? AND status IN ('pool','active')
-  `);
-  const insertSt = db.prepare(`
-    INSERT INTO allocations (user_id, provider, phone_number, country_code, operator, status, allocated_at)
-    VALUES (?, 'seven1tel', ?, ?, ?, 'pool', strftime('%s','now'))
-  `);
-
-  let added = 0, skipped = 0, invalid = 0;
-  const tx = db.transaction((arr) => {
-    for (const n of arr) {
-      let phone = (typeof n === 'string' ? n : n?.phone_number || '').toString().trim();
-      phone = phone.replace(/[^\d+]/g, '').replace(/^\++/, '+');
-      if (!phone || phone.replace(/\D/g, '').length < 6) { invalid++; continue; }
-      if (exists.get(phone)) { skipped++; continue; }
-      insertSt.run(sysUser.id, phone, country_code || null, rangeName);
-      added++;
-    }
-  });
-  tx.immediate(numbers);
-  logFromReq(req, 'seven1tel_pool_added', { meta: { added, skipped, invalid, range: rangeName } });
   res.json({ added, skipped, invalid, range: rangeName });
 });
 
@@ -641,59 +466,22 @@ router.post('/ims/otp', authRequired, adminOnly, async (req, res) => {
 // =============================================================
 // Helper: when an OTP is confirmed, write CDR + credit agent
 // =============================================================
-async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null, opts = {}) {
-  const allowFollowup = !!opts.allowFollowup;
+async function markOtpReceived(allocation, otpCode, cli = null) {
   const { agent_amount } = agentPayout({
     provider: allocation.provider,
     country_code: allocation.country_code,
     operator: allocation.operator,
   });
 
-  const existing = db.prepare(`
-    SELECT id, otp, status FROM allocations WHERE id = ? LIMIT 1
-  `).get(allocation.id);
-  if (!existing) return false;
-  if (existing.status === 'received' && String(existing.otp || '') === String(otpCode || '')) {
-    return false;
-  }
-
-  const isIms = allocation.provider === 'ims';
-  const shortRange = (s) => {
-    if (!s) return '';
-    const parts = String(s).trim().split(/\s+/);
-    return parts[parts.length - 1] || s;
-  };
-  const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
-  const cliTag = cli ? `${cli} ` : '';
-  const prefix = label ? `[${label}] ` : '';
-
-  let applied = false;
-  let followupApplied = false;
   const tx = db.transaction(() => {
-    if (allowFollowup && existing.status === 'received' && String(existing.otp || '') !== String(otpCode || '')) {
-      const updateFollowup = db.prepare(`
-        UPDATE allocations
-           SET otp = ?, cli = COALESCE(?, cli), otp_received_at = strftime('%s','now')
-         WHERE id = ? AND status = 'received'
-      `).run(otpCode, cli || null, allocation.id);
-      if (updateFollowup.changes !== 1) return;
-      applied = true;
-      followupApplied = true;
-      db.prepare(`
-        INSERT INTO notifications (user_id, title, message, type)
-        VALUES (?, ?, ?, 'success')
-      `).run(allocation.user_id, 'OTP updated', `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (updated OTP)`);
-      return;
-    }
-
-    const update = db.prepare(`
+    // Update allocation (preserve existing cli if a new one isn't provided)
+    db.prepare(`
       UPDATE allocations SET otp = ?, cli = COALESCE(?, cli),
              status = 'received', otp_received_at = strftime('%s','now')
-       WHERE id = ? AND status = 'active' AND (otp IS NULL OR otp = '')
+      WHERE id = ?
     `).run(otpCode, cli || null, allocation.id);
-    if (update.changes !== 1) return;
-    applied = true;
 
+    // Insert CDR (with CLI tag for service identification)
     db.prepare(`
       INSERT INTO cdr (user_id, allocation_id, provider, country_code, operator, phone_number, otp_code, cli, price_bdt, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'billed')
@@ -703,17 +491,32 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
       otpCode, cli || null, agent_amount
     );
 
+    // Credit agent (only if rate card allows payout > 0)
     if (agent_amount > 0) {
       db.prepare(`UPDATE users SET balance = balance + ?, otp_count = otp_count + 1 WHERE id = ?`)
         .run(agent_amount, allocation.user_id);
+
+      // Payment record
       db.prepare(`
         INSERT INTO payments (user_id, amount_bdt, type, method, reference, note)
         VALUES (?, ?, 'credit', 'auto', ?, 'OTP commission')
       `).run(allocation.user_id, agent_amount, `otp:${allocation.id}`);
     } else {
+      // Still bump otp_count for stats, but no balance change
       db.prepare(`UPDATE users SET otp_count = otp_count + 1 WHERE id = ?`).run(allocation.user_id);
     }
 
+    // Notification — IMS shows short range code (e.g. "TF04 → 458291"),
+    // AccHub shows the full operator label. CLI/service shown when known.
+    const isIms = allocation.provider === 'ims';
+    const shortRange = (s) => {
+      if (!s) return '';
+      const parts = String(s).trim().split(/\s+/);
+      return parts[parts.length - 1] || s;
+    };
+    const label = isIms ? shortRange(allocation.operator) : (allocation.operator || allocation.country_code || '');
+    const cliTag = cli ? `${cli} ` : '';
+    const prefix = label ? `[${label}] ` : '';
     const notifMsg = agent_amount > 0
       ? `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (+৳${agent_amount})`
       : `${cliTag}${prefix}${allocation.phone_number} → ${otpCode} (no commission for this rate)`;
@@ -722,103 +525,8 @@ async function markOtpReceived(allocation, otpCode, cli = null, auditMeta = null
       VALUES (?, ?, ?, 'success')
     `).run(allocation.user_id, 'OTP received', notifMsg);
   });
-  tx.immediate();
-  if (!applied) return false;
-
-  try {
-    const { logOtpEvent } = require('../lib/otpAudit');
-    logOtpEvent({
-      provider: allocation.provider,
-      event: followupApplied ? 'followup_delivered' : 'credited',
-      user_id: allocation.user_id,
-      allocation_id: allocation.id,
-      phone_number: allocation.phone_number,
-      otp_code: otpCode,
-      endpoint: auditMeta?.endpoint || null,
-      currency: auditMeta?.currency || null,
-      detail: followupApplied
-        ? `Delivered follow-up OTP${cli ? ` · ${cli}` : ''}`
-        : (agent_amount > 0
-          ? `Credited ৳${agent_amount}${cli ? ` · ${cli}` : ''}`
-          : `OTP received (no commission)${cli ? ` · ${cli}` : ''}`),
-    });
-  } catch (_) { /* never break delivery */ }
-  return true;
+  tx();
 }
-
-// ============================================================
-// GET /api/numbers/otp-audit — agent-visible OTP delivery log
-// ============================================================
-// Shows the full lifecycle for the caller's OTPs: every scrape cycle the bot
-// ran, every match it found for one of YOUR numbers, and every credit that
-// was applied. Admins see ALL events (including unmatched / scrape failures)
-// so they can debug "why didn't I get my OTP" reports without SSH.
-router.get('/otp-audit', authRequired, (req, res) => {
-  const isAdmin = req.user.role === 'admin';
-  const limit = Math.min(500, Math.max(1, +(req.query.limit) || 200));
-  const provider = req.query.provider ? String(req.query.provider) : null;
-
-  const where = [];
-  const params = [];
-  if (!isAdmin) {
-    // Agents see ONLY events tied to them: their own matched/credited rows,
-    // plus scrape_ok cycles (so they can see the bot is alive). Other agents'
-    // matched rows and unmatched-OTP rows stay private.
-    where.push(`(user_id = ? OR event = 'scrape_ok')`);
-    params.push(req.user.id);
-  }
-  if (provider) {
-    where.push(`provider = ?`);
-    params.push(provider);
-  }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const rows = db.prepare(`
-    SELECT id, ts, provider, event, user_id, allocation_id,
-           phone_number, otp_code, rows_seen, matches_found,
-           endpoint, currency, detail
-    FROM otp_audit_log
-    ${whereSql}
-    ORDER BY ts DESC, id DESC
-    LIMIT ?
-  `).all(...params, limit);
-
-  // Privacy hardening: agents must NEVER see internal scraper URLs / query
-  // params (those expose IPRN endpoints, DataTables column maps, currency
-  // ids, date ranges, etc.). Strip the endpoint + raw detail from agent rows
-  // and only keep the minimum needed for the lifecycle panel. Admins keep
-  // full visibility for debugging.
-  const safeRows = isAdmin
-    ? rows
-    : rows.map((r) => ({
-        ...r,
-        endpoint: null,
-        // Detail can contain raw upstream payload fragments — hide for agents.
-        detail: r.event === 'credited' || r.event === 'matched' ? r.detail : null,
-      }));
-
-  // Stats over the last 24h (audit-page header)
-  const since = Math.floor(Date.now() / 1000) - 86400;
-  const stat = (event) => {
-    const sql = `SELECT COUNT(*) c FROM otp_audit_log WHERE ts >= ? AND event = ?${
-      isAdmin ? '' : ` AND (user_id = ? OR event = 'scrape_ok')`
-    }${provider ? ' AND provider = ?' : ''}`;
-    const args = [since, event];
-    if (!isAdmin) args.push(req.user.id);
-    if (provider) args.push(provider);
-    return db.prepare(sql).get(...args).c;
-  };
-
-  res.json({
-    rows: safeRows,
-    stats_24h: {
-      scrapes:   stat('scrape_ok'),
-      failures:  stat('scrape_fail'),
-      matched:   stat('matched'),
-      credited:  stat('credited'),
-      unmatched: stat('no_match'),
-    },
-  });
-});
 
 module.exports = router;
 module.exports.markOtpReceived = markOtpReceived;

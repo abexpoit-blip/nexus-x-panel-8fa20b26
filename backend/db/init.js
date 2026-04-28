@@ -4,31 +4,20 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
-const { acquireSqliteInitLock, withSqliteBusyRetry } = require('../lib/sqliteRetry');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '60000', 10);
-const withBusyRetry = (label, fn) => withSqliteBusyRetry(`db:init ${label}`, fn, { attempts: 8, maxDelayMs: 10000 });
 
 // Ensure data directory exists
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-const releaseInitLock = acquireSqliteInitLock(DB_PATH);
-process.once('exit', releaseInitLock);
 
-const db = withBusyRetry('open database', () => new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS }));
-withBusyRetry('configure pragmas', () => {
-  db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  db.pragma('foreign_keys = ON');
-});
+const db = new Database(DB_PATH);
 
 // Apply schema
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-withBusyRetry('schema apply', () => db.exec(schema));
+db.exec(schema);
 
 // --- Idempotent column-add migrations for existing databases ---
 // MUST run BEFORE tg_schema.sql so CREATE INDEX statements on new columns succeed
@@ -39,7 +28,7 @@ function addColIfMissing(table, col, ddl) {
   if (!tableExists(table)) return; // skip — schema will create with column
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === col)) {
-    withBusyRetry(`add column ${table}.${col}`, () => db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`));
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
     console.log(`✓ Migration: added ${table}.${col}`);
   }
 }
@@ -52,7 +41,7 @@ addColIfMissing('cdr', 'note', 'TEXT');
 addColIfMissing('tg_assignments', 'batch_id', 'TEXT');
 
 // NumPanel range customization metadata
-withBusyRetry('numpanel_range_meta schema', () => db.exec(`
+db.exec(`
   CREATE TABLE IF NOT EXISTS numpanel_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -62,12 +51,12 @@ withBusyRetry('numpanel_range_meta schema', () => db.exec(`
     notes TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`));
+`);
 addColIfMissing('numpanel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('numpanel_range_meta', 'service_tag', 'TEXT'); // facebook|whatsapp|telegram|other
 
 // IMS range metadata (mirror of numpanel)
-withBusyRetry('ims_range_meta schema', () => db.exec(`
+db.exec(`
   CREATE TABLE IF NOT EXISTS ims_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -79,12 +68,12 @@ withBusyRetry('ims_range_meta schema', () => db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`));
+`);
 addColIfMissing('ims_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('ims_range_meta', 'service_tag', 'TEXT');
 
 // MSI range metadata (mirror of numpanel)
-withBusyRetry('msi_range_meta schema', () => db.exec(`
+db.exec(`
   CREATE TABLE IF NOT EXISTS msi_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -96,73 +85,30 @@ withBusyRetry('msi_range_meta schema', () => db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`));
+`);
 addColIfMissing('msi_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('msi_range_meta', 'service_tag', 'TEXT');
-
-// Seven1Tel range metadata (mirror of msi — same /ints panel software)
-withBusyRetry('seven1tel_range_meta schema', () => db.exec(`
-  CREATE TABLE IF NOT EXISTS seven1tel_range_meta (
-    range_prefix TEXT PRIMARY KEY,
-    custom_name TEXT,
-    tag_color TEXT,
-    priority INTEGER DEFAULT 0,
-    request_override INTEGER,
-    notes TEXT,
-    disabled INTEGER DEFAULT 0,
-    service_tag TEXT,
-    updated_at INTEGER DEFAULT (strftime('%s','now'))
-  );
-`));
-addColIfMissing('seven1tel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
-addColIfMissing('seven1tel_range_meta', 'service_tag', 'TEXT');
-
-// OTP delivery audit log — every OTP scrape cycle + every match logged here so
-// agents can SEE when their OTPs were scraped, matched, and credited (with the
-// upstream endpoint URL and currency filter used). Helps debugging "why didn't
-// I get my OTP" complaints — agents can see whether the bot is even polling.
-withBusyRetry('otp_audit_log schema', () => db.exec(`
-  CREATE TABLE IF NOT EXISTS otp_audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    provider TEXT NOT NULL,                  -- iprn_sms | iprn | ims | ...
-    event TEXT NOT NULL,                     -- 'scrape_ok' | 'scrape_fail' | 'matched' | 'no_match' | 'credited'
-    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    allocation_id INTEGER REFERENCES allocations(id) ON DELETE SET NULL,
-    phone_number TEXT,
-    otp_code TEXT,
-    rows_seen INTEGER,                       -- rows the scrape returned (for scrape_ok)
-    matches_found INTEGER,                   -- credited matches in this scrape
-    endpoint TEXT,                           -- upstream URL the bot hit
-    currency TEXT,                           -- filter applied (USD / EUR / GBP)
-    detail TEXT                              -- short human-readable note / error msg
-  );
-`));
-withBusyRetry('otp audit indexes', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_ts ON otp_audit_log(ts DESC);`));
-withBusyRetry('otp audit user index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_user ON otp_audit_log(user_id, ts DESC);`));
-withBusyRetry('otp audit provider index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_provider ON otp_audit_log(provider, ts DESC);`));
 
 // Apply Telegram bot schema (additive) AFTER column migrations
 const tgSchemaPath = path.join(__dirname, 'tg_schema.sql');
 if (fs.existsSync(tgSchemaPath)) {
-  withBusyRetry('tg schema apply', () => db.exec(fs.readFileSync(tgSchemaPath, 'utf8')));
+  db.exec(fs.readFileSync(tgSchemaPath, 'utf8'));
   console.log('✓ TG schema applied');
 }
 
 // Seed default admin (only if no admin exists)
-const adminExists = withBusyRetry('check admin seed', () => db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get());
+const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
 if (adminExists.c === 0) {
   const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-  withBusyRetry('seed admin', () => db.prepare(`
+  db.prepare(`
     INSERT INTO users (username, password_hash, role, full_name, balance)
     VALUES (?, ?, 'admin', 'System Admin', 0)
-  `).run(ADMIN_USERNAME, hash));
+  `).run(ADMIN_USERNAME, hash);
   console.log(`✓ Default admin created: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
   console.log('  IMPORTANT: Change this password immediately in production!');
 }
 
 console.log(`✓ Database ready at ${DB_PATH}`);
 db.close();
-releaseInitLock();
 
 module.exports = { DB_PATH };

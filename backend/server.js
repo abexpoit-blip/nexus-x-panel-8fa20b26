@@ -65,30 +65,23 @@ if (process.env.NODE_ENV === 'production') {
 // Global rate limiter
 app.use('/api', rateLimit({
   windowMs: +(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
-  max: +(process.env.RATE_LIMIT_MAX || 600),
+  max: +(process.env.RATE_LIMIT_MAX || 120),
   standardHeaders: true,
   legacyHeaders: false,
-  // Don't count CORS preflights or health checks — these are noisy and
-  // would otherwise eat up the budget and stall the login spinner.
-  skip: (req) => req.method === 'OPTIONS' || req.path === '/health',
   message: { error: 'Too many requests, slow down.' },
 }));
 
 // Strict limiter on auth endpoints (brute force protection)
 const authLimiter = rateLimit({
   windowMs: 15 * 60_000,                    // 15 minutes
-  max: 50,                                  // 50 login/register attempts per IP — generous for shared NAT/office IPs
+  max: 10,                                  // 10 login/register attempts per IP
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,             // only count failures
-  skip: (req) => req.method === 'OPTIONS',  // never block CORS preflight
   message: { error: 'Too many login attempts. Try again in 15 minutes.' },
 });
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
-
-// Public health check must be registered before protected routes and rate-limiters.
-app.get('/api/health', (_, res) => res.json({ ok: true, ts: Date.now() }));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -99,9 +92,11 @@ app.use('/api/cdr', require('./routes/cdr'));
 app.use('/api', require('./routes/payments'));            // /payments + /withdrawals
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/leaderboard', require('./routes/leaderboard'));
-
 app.use('/api', require('./routes/security'));            // /audit + /sessions + /settings
 app.use('/api/admin/tgbot', require('./routes/tgbot'));   // Telegram bot admin
+
+// Health
+app.get('/api/health', (_, res) => res.json({ ok: true, ts: Date.now() }));
 
 // 404
 app.use('/api', (_, res) => res.status(404).json({ error: 'Not found' }));
@@ -121,13 +116,16 @@ app.listen(PORT, () => {
   console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`   CORS origin: ${corsOrigins ? corsOrigins.join(', ') : '(allow all — dev only)'}\n`);
 
-  // Default: keep heavy bot workers out of the API process so login/health stay responsive.
-  // Set RUN_WORKERS_IN_API=true only for emergency single-process fallback.
-  if (String(process.env.RUN_WORKERS_IN_API || 'false').toLowerCase() === 'true') {
-    console.log('▶ Starting bot workers in-process…');
-    try { require('./workers').startAll(); }
-    catch (e) { console.error('Worker startup failed:', e.message); }
-  } else {
-    console.log('▶ Bot workers disabled in API process (managed by nexus-workers).');
-  }
+  // Start OTP poller (AccHub auto polling) after server is up
+  require('./workers/otpPoller').start();
+
+  // Start IMS browser bot (no-op if IMS_ENABLED=false)
+  require('./workers/imsBot').start();
+
+  // Start MSI browser bot (no-op if MSI_ENABLED=false)
+  require('./workers/msiBot').start();
+
+  // Start NumPanel bot (no-op if NUMPANEL_ENABLED=false)
+  try { require('./workers/numpanelBot').start(); }
+  catch (e) { console.warn('numpanel bot start error:', e.message); }
 });

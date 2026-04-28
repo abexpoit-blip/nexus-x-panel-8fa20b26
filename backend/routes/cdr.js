@@ -84,7 +84,7 @@ router.post('/refund/:id', authRequired, adminOnly, (req, res) => {
       VALUES (?, ?, 'debit', 'admin', ?, ?)
     `).run(c.user_id, c.price_bdt, `refund:${id}`, note || 'OTP refund');
   });
-  tx.immediate();
+  tx();
 
   logFromReq(req, 'cdr_refunded', { targetType: 'cdr', targetId: id });
   res.json({ ok: true });

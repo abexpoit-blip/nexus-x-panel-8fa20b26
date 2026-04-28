@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { RangePoolGrid } from "@/components/admin/RangePoolGrid";
 import { GradientMesh, PageHeader } from "@/components/premium";
-import { AutoPoolCard } from "@/components/admin/AutoPoolCard";
 import {
   Bot, CheckCircle2, XCircle, Activity, Database, MessageSquareText,
   RefreshCw, Power, Play, Square, Save, Eye, EyeOff, Zap, Sparkles, Layers,
@@ -657,8 +656,6 @@ const AdminMsiStatus = () => {
           </div>
         }
       />
-
-      <AutoPoolCard botId="msi" />
 
       {isLoading && <p className="text-center text-muted-foreground text-sm">Loading…</p>}
 

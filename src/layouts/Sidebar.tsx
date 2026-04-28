@@ -7,8 +7,7 @@ import { prefetchPage } from "@/lib/lazyPages";
 import {
   LayoutDashboard, Hash, MessageSquare, List, BarChart3, Bell, Inbox,
   Users, Server, DollarSign, FileText, LogOut, X, Layers,
-  Wallet, Shield, User, CreditCard, Trophy, Bot, ArrowDownToLine, History, Settings,
-  ScrollText, PackageCheck
+  Wallet, Shield, User, CreditCard, Trophy, Bot, ArrowDownToLine, History, Settings
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -24,7 +23,6 @@ const agentNav: NavItem[] = [
   { label: "Console", path: "/agent/console", icon: MessageSquare },
   { label: "My Numbers", path: "/agent/my-numbers", icon: List },
   { label: "OTP History", path: "/agent/history", icon: History },
-  { label: "OTP Audit Log", path: "/agent/otp-audit", icon: ScrollText },
   { label: "Summary", path: "/agent/summary", icon: BarChart3 },
   { label: "Leaderboard", path: "/agent/leaderboard", icon: Trophy },
   { label: "Payments", path: "/agent/payments", icon: Wallet },
@@ -42,15 +40,9 @@ const adminNav: NavItem[] = [
   { label: "Withdrawals", path: "/admin/withdrawals", icon: ArrowDownToLine },
   { label: "Security", path: "/admin/security", icon: Shield },
   { label: "SMS CDR", path: "/admin/cdr", icon: FileText },
-  { label: "All Bots", path: "/admin/bots", icon: Layers },
   { label: "IMS Bot", path: "/admin/ims-status", icon: Bot },
   { label: "MSI Bot", path: "/admin/msi-status", icon: Bot },
   { label: "NumPanel Bot", path: "/admin/numpanel-status", icon: Bot },
-  { label: "IPRN-SMS Bot", path: "/admin/iprn-sms-status", icon: Bot },
-  { label: "IPRN-SMS Bot V2", path: "/admin/iprn-sms-v2-status", icon: Bot },
-  { label: "IPRN-SMS Deliveries", path: "/admin/iprn-sms-deliveries", icon: PackageCheck },
-  { label: "IPRN-SMS V2 Deliveries", path: "/admin/iprn-sms-v2-deliveries", icon: PackageCheck },
-  { label: "Seven1Tel Bot", path: "/admin/seven1tel-status", icon: Bot },
   { label: "TG Bot", path: "/admin/tg-bot", icon: Bot },
   // Provider Settings (OTP expiry / recent-OTP window) is now embedded inside
   // the IMS Bot page; route /admin/provider-settings still works for direct links.

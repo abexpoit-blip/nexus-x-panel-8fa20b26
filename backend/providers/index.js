@@ -3,18 +3,12 @@ const acchub = require('./acchub');
 const ims = require('./ims');
 const msi = require('./msi');
 const numpanel = require('./numpanel');
-const iprn_sms = require('./iprn_sms');
-const iprn_sms_v2 = require('./iprn_sms_v2');
-const seven1tel = require('./seven1tel');
 
 const providers = {
   acchub,
   ims,
   msi,
   numpanel,
-  iprn_sms,
-  iprn_sms_v2,
-  seven1tel,
 };
 
 function get(id) {
