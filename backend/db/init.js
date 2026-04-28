@@ -113,7 +113,7 @@ addColIfMissing('msi_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('msi_range_meta', 'service_tag', 'TEXT');
 
 // Seven1Tel range metadata (mirror of msi — same /ints panel software)
-db.exec(`
+withBusyRetry('seven1tel_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS seven1tel_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -125,7 +125,7 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('seven1tel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('seven1tel_range_meta', 'service_tag', 'TEXT');
 
@@ -133,7 +133,7 @@ addColIfMissing('seven1tel_range_meta', 'service_tag', 'TEXT');
 // agents can SEE when their OTPs were scraped, matched, and credited (with the
 // upstream endpoint URL and currency filter used). Helps debugging "why didn't
 // I get my OTP" complaints — agents can see whether the bot is even polling.
-db.exec(`
+withBusyRetry('otp_audit_log schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS otp_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL DEFAULT (strftime('%s','now')),
@@ -149,15 +149,15 @@ db.exec(`
     currency TEXT,                           -- filter applied (USD / EUR / GBP)
     detail TEXT                              -- short human-readable note / error msg
   );
-`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_ts ON otp_audit_log(ts DESC);`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_user ON otp_audit_log(user_id, ts DESC);`);
-db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_provider ON otp_audit_log(provider, ts DESC);`);
+`));
+withBusyRetry('otp audit indexes', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_ts ON otp_audit_log(ts DESC);`));
+withBusyRetry('otp audit user index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_user ON otp_audit_log(user_id, ts DESC);`));
+withBusyRetry('otp audit provider index', () => db.exec(`CREATE INDEX IF NOT EXISTS idx_otp_audit_provider ON otp_audit_log(provider, ts DESC);`));
 
 // Apply Telegram bot schema (additive) AFTER column migrations
 const tgSchemaPath = path.join(__dirname, 'tg_schema.sql');
 if (fs.existsSync(tgSchemaPath)) {
-  db.exec(fs.readFileSync(tgSchemaPath, 'utf8'));
+  withBusyRetry('tg schema apply', () => db.exec(fs.readFileSync(tgSchemaPath, 'utf8')));
   console.log('✓ TG schema applied');
 }
 
@@ -165,10 +165,10 @@ if (fs.existsSync(tgSchemaPath)) {
 const adminExists = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get();
 if (adminExists.c === 0) {
   const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-  db.prepare(`
+  withBusyRetry('seed admin', () => db.prepare(`
     INSERT INTO users (username, password_hash, role, full_name, balance)
     VALUES (?, ?, 'admin', 'System Admin', 0)
-  `).run(ADMIN_USERNAME, hash);
+  `).run(ADMIN_USERNAME, hash));
   console.log(`✓ Default admin created: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
   console.log('  IMPORTANT: Change this password immediately in production!');
 }
