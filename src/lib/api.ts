@@ -13,6 +13,13 @@ const BASE = (isKnownBadMainDomainApi ? DEFAULT_API_BASE : (configuredApiBase ||
 const TOKEN_KEY = "nexus_token";
 const DEMO_KEY = "nexus_demo_mode";
 const REQUEST_TIMEOUT_MS = Math.max(5000, +(import.meta.env.VITE_API_TIMEOUT_MS || 15000));
+const LONG_REQUEST_TIMEOUT_MS = Math.max(REQUEST_TIMEOUT_MS, +(import.meta.env.VITE_API_LONG_TIMEOUT_MS || 190000));
+
+function timeoutForPath(path: string) {
+  return /\/(scrape-now|sync-live|restart|start|stop|scrape-numbers)$/.test(path) || /\/autopool\/[^/]+\/run$/.test(path)
+    ? LONG_REQUEST_TIMEOUT_MS
+    : REQUEST_TIMEOUT_MS;
+}
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY),
@@ -123,7 +130,7 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
 
   for (const base of bases) {
     const controller = new AbortController();
-    const timeoutId = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutForPath(path));
     try {
       const res = await fetch(`${base}${path}`, {
       ...opts,
