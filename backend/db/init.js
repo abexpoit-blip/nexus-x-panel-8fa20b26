@@ -64,7 +64,7 @@ addColIfMissing('cdr', 'note', 'TEXT');
 addColIfMissing('tg_assignments', 'batch_id', 'TEXT');
 
 // NumPanel range customization metadata
-db.exec(`
+withBusyRetry('numpanel_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS numpanel_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -74,12 +74,12 @@ db.exec(`
     notes TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('numpanel_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('numpanel_range_meta', 'service_tag', 'TEXT'); // facebook|whatsapp|telegram|other
 
 // IMS range metadata (mirror of numpanel)
-db.exec(`
+withBusyRetry('ims_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS ims_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -91,12 +91,12 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('ims_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('ims_range_meta', 'service_tag', 'TEXT');
 
 // MSI range metadata (mirror of numpanel)
-db.exec(`
+withBusyRetry('msi_range_meta schema', () => db.exec(`
   CREATE TABLE IF NOT EXISTS msi_range_meta (
     range_prefix TEXT PRIMARY KEY,
     custom_name TEXT,
@@ -108,7 +108,7 @@ db.exec(`
     service_tag TEXT,
     updated_at INTEGER DEFAULT (strftime('%s','now'))
   );
-`);
+`));
 addColIfMissing('msi_range_meta', 'disabled', 'INTEGER DEFAULT 0');
 addColIfMissing('msi_range_meta', 'service_tag', 'TEXT');
 
