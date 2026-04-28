@@ -77,4 +77,21 @@ db.bestEffortWrite = function bestEffortWrite(label, fn, timeoutMs = Number.pars
   }
 };
 
+db.bestEffortRead = function bestEffortRead(label, fn, fallback, timeoutMs = Number.parseInt(process.env.SQLITE_BEST_EFFORT_READ_TIMEOUT_MS || '150', 10)) {
+  const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 150;
+  let previousTimeout = SQLITE_BUSY_TIMEOUT_MS;
+  try {
+    previousTimeout = Number(db.pragma('busy_timeout', { simple: true })) || SQLITE_BUSY_TIMEOUT_MS;
+    db.pragma(`busy_timeout = ${safeTimeoutMs}`);
+    return fn();
+  } catch (e) {
+    if (!/database is (locked|busy)/i.test(e.message || '')) {
+      console.warn(`[db] best-effort read failed (${label}):`, e.message);
+    }
+    return fallback;
+  } finally {
+    try { db.pragma(`busy_timeout = ${previousTimeout}`); } catch (_) {}
+  }
+};
+
 module.exports = db;

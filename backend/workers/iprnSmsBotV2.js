@@ -204,7 +204,7 @@ function logEvent(level, message, meta) {
 }
 
 function getStatus() {
-  try {
+  return db.bestEffortRead('iprn_sms_v2 status counts', () => {
     const poolSize       = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='pool'").get().c;
     const claimingSize   = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='claiming'").get().c;
     const activeAssigned = db.prepare("SELECT COUNT(*) c FROM allocations WHERE provider='iprn_sms_v2' AND status='active'").get().c;
@@ -213,12 +213,10 @@ function getStatus() {
       ...status, poolSize, claimingSize, activeAssigned, otpReceived,
       events: events.slice(),
     };
-  } catch (_) {
-    return {
-      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
-      events: events.slice(),
-    };
-  }
+  }, {
+    ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+    events: events.slice(),
+  });
 }
 
 // OTP cache (currently no live OTP feed for this account — kept for parity)
