@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
-const { withSqliteBusyRetry } = require('../lib/sqliteRetry');
+const { acquireSqliteInitLock, withSqliteBusyRetry } = require('../lib/sqliteRetry');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -15,6 +15,8 @@ const withBusyRetry = (label, fn) => withSqliteBusyRetry(`db:init ${label}`, fn,
 // Ensure data directory exists
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const releaseInitLock = acquireSqliteInitLock(DB_PATH);
+process.once('exit', releaseInitLock);
 
 const db = withBusyRetry('open database', () => new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS }));
 withBusyRetry('configure pragmas', () => {
@@ -161,5 +163,6 @@ if (adminExists.c === 0) {
 
 console.log(`✓ Database ready at ${DB_PATH}`);
 db.close();
+releaseInitLock();
 
 module.exports = { DB_PATH };
