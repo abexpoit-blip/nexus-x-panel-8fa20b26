@@ -4,15 +4,16 @@ const path = require('path');
 const fs = require('fs');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
+const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '30000', 10);
 
 // Auto-create data dir
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS });
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
-db.pragma('busy_timeout = 5000');
+db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 db.pragma('synchronous = NORMAL');
 
 function _tableExists(table) {
