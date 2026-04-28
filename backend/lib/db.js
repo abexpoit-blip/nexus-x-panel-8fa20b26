@@ -62,4 +62,19 @@ _ensureIndex('otp_audit_log', 'idx_otp_audit_provider_phone_otp_event_ts', 'CREA
 _ensureIndex('sessions', 'idx_sessions_token_hash', 'CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)');
 _ensureIndex('sessions', 'idx_sessions_user_expires', 'CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions(user_id, expires_at DESC)');
 
+db.bestEffortWrite = function bestEffortWrite(label, fn, timeoutMs = Number.parseInt(process.env.SQLITE_BEST_EFFORT_WRITE_TIMEOUT_MS || '750', 10)) {
+  const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 750;
+  let previousTimeout = SQLITE_BUSY_TIMEOUT_MS;
+  try {
+    previousTimeout = Number(db.pragma('busy_timeout', { simple: true })) || SQLITE_BUSY_TIMEOUT_MS;
+    db.pragma(`busy_timeout = ${safeTimeoutMs}`);
+    return fn();
+  } catch (e) {
+    console.warn(`[db] best-effort write skipped (${label}):`, e.message);
+    return undefined;
+  } finally {
+    try { db.pragma(`busy_timeout = ${previousTimeout}`); } catch (_) {}
+  }
+};
+
 module.exports = db;

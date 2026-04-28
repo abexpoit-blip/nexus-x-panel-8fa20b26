@@ -7,7 +7,7 @@ const stmt = db.prepare(`
 `);
 
 function log({ userId = null, action, targetType = null, targetId = null, ip = null, userAgent = null, meta = null }) {
-  try {
+  db.bestEffortWrite(`audit:${action}`, () => {
     stmt.run(
       userId,
       action,
@@ -17,9 +17,7 @@ function log({ userId = null, action, targetType = null, targetId = null, ip = n
       userAgent,
       meta ? (typeof meta === 'string' ? meta : JSON.stringify(meta)) : null
     );
-  } catch (e) {
-    console.error('audit log failed:', e.message);
-  }
+  }, 250);
 }
 
 function logFromReq(req, action, extra = {}) {
