@@ -735,11 +735,8 @@ router.put('/ims-otp-interval', async (req, res) => {
     `).run(String(interval));
     logFromReq(req, 'ims_otp_interval_updated', { meta: { interval_sec: interval } });
     // Restart bot so new interval takes effect immediately
-    try {
-      const bot = require('../workers/imsBot');
-      await bot.restart();
-      bot.logEvent && bot.logEvent('success', `OTP poll interval changed to ${interval}s by admin`);
-    } catch (e) { console.warn('ims-otp-interval restart:', e.message); }
+    try { await restartWorkerBot('../workers/imsBot'); }
+    catch (e) { console.warn('ims-otp-interval restart:', e.message); }
     res.json({ ok: true, interval_sec: interval });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1168,10 +1165,7 @@ router.delete('/msi-cookies', async (req, res) => {
   try {
     db.prepare("DELETE FROM settings WHERE key = 'msi_cookies'").run();
     logFromReq(req, 'msi_cookies_cleared', {});
-    try {
-      const bot = require('../workers/msiBot');
-      await bot.restart();
-    } catch (_) {}
+    try { await restartWorkerBot('../workers/msiBot'); } catch (_) {}
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1462,10 +1456,7 @@ router.delete('/numpanel-cookies', async (req, res) => {
   try {
     db.prepare("DELETE FROM settings WHERE key = 'numpanel_cookies'").run();
     logFromReq(req, 'numpanel_cookies_cleared', {});
-    try {
-      const bot = require('../workers/numpanelBot');
-      await bot.restart();
-    } catch (_) {}
+    try { await restartWorkerBot('../workers/numpanelBot'); } catch (_) {}
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
