@@ -112,12 +112,10 @@ function getStatus() {
       otpCacheSize: recentOtpCache.size,
     };
   }, {
-    return {
-      ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
-      emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
-      cookieFailStreak: _cookieFailStreak, hasCookies: false,
-      maxRowsScraped: _maxRowsSeen, otpCacheSize: 0,
-    };
+    ...status, poolSize: 0, claimingSize: 0, activeAssigned: 0, otpReceived: 0,
+    emptyStreak, emptyLimit: EMPTY_LIMIT, events: events.slice(),
+    cookieFailStreak: _cookieFailStreak, hasCookies: false,
+    maxRowsScraped: _maxRowsSeen, otpCacheSize: 0,
   });
 }
 
