@@ -2,7 +2,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const { withSqliteBusyRetry } = require('./sqliteRetry');
+const { waitForSqliteInitLock, withSqliteBusyRetry } = require('./sqliteRetry');
 
 const DB_PATH = process.env.DB_PATH || './data/nexus.db';
 const SQLITE_BUSY_TIMEOUT_MS = Number.parseInt(process.env.SQLITE_BUSY_TIMEOUT_MS || '60000', 10);
@@ -12,6 +12,7 @@ const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
 const withBusyRetry = (label, fn, options) => withSqliteBusyRetry(`db ${label}`, fn, { attempts: 8, maxDelayMs: 10000, ...options });
+waitForSqliteInitLock(DB_PATH);
 const db = withBusyRetry('open database', () => new Database(DB_PATH, { timeout: SQLITE_BUSY_TIMEOUT_MS }));
 withBusyRetry('configure pragmas', () => {
   db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
