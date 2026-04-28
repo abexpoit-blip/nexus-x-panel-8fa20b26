@@ -54,6 +54,14 @@ else
   pm2 start server.js --name "$PM2_NAME"
 fi
 
+WORKERS_NAME="nexus-workers"
+echo -e "\n${Y}▶ Restarting backend workers (pm2: $WORKERS_NAME)…${N}"
+if pm2 list | grep -q "$WORKERS_NAME"; then
+  pm2 restart "$WORKERS_NAME" --update-env
+else
+  pm2 start workers/runner.js --name "$WORKERS_NAME"
+fi
+
 # Telegram bot — separate pm2 process
 TGBOT_NAME="nexus-tgbot"
 echo -e "\n${Y}▶ Restarting Telegram bot (pm2: $TGBOT_NAME)…${N}"
