@@ -48,13 +48,13 @@ const COUNTRY_NAMES: Record<string, string> = {
 const countryName = (cc?: string | null) => (cc && COUNTRY_NAMES[cc.toUpperCase()]) || cc || "Unknown";
 const serviceIcon = (s?: string | null) => {
   const x = (s || "").toLowerCase();
-  if (x.includes("facebook"))  return "[FB]";
-  if (x.includes("whatsapp"))  return "[WA]";
-  if (x.includes("telegram"))  return "[TG]";
-  if (x.includes("tiktok"))    return "[TT]";
-  if (x.includes("instagram")) return "[IG]";
-  if (x.includes("google"))    return "[GG]";
-  return "[SMS]";
+  if (x.includes("facebook")) return "🟦";
+  if (x.includes("whatsapp")) return "🟢";
+  if (x.includes("telegram")) return "✈️";
+  if (x.includes("tiktok")) return "🎵";
+  if (x.includes("instagram")) return "📷";
+  if (x.includes("google")) return "🔍";
+  return "📡";
 };
 
 export default function TgBot() {
@@ -159,34 +159,10 @@ function Kpi({ icon, label, value, accent }: { icon: React.ReactNode; label: str
 // ============================================================
 function OverviewTab() {
   const [savingExpiry, setSavingExpiry] = useState(false);
-  const qc = useQueryClient();
   const { data: expiry, refetch: refetchExpiry, isLoading: expiryLoading } = useQuery({
     queryKey: ["tgbot-otp-expiry"],
     queryFn: () => api.admin.otpExpiry(),
   });
-  const { data: cfg, refetch: refetchCfg } = useQuery({
-    queryKey: ["tgbot-config"],
-    queryFn: () => api.tgbot.config(),
-  });
-  const billingOn = cfg?.tg_billing_enabled !== "0";
-  const [savingBilling, setSavingBilling] = useState(false);
-
-  const toggleBilling = async () => {
-    setSavingBilling(true);
-    try {
-      await api.tgbot.saveConfig({ tg_billing_enabled: billingOn ? "0" : "1" });
-      toast.success(billingOn
-        ? "Billing OFF — bot now in FREE mode (no balance / no charges)"
-        : "Billing ON — wallet + per-OTP charges resumed");
-      await refetchCfg();
-      qc.invalidateQueries({ queryKey: ["tgbot-status"] });
-    } catch (e) {
-      toast.error("Failed: " + (e as Error).message);
-    } finally {
-      setSavingBilling(false);
-    }
-  };
-
   const currentMin = expiry?.expiry_min ?? 30;
   const expiryOpts = expiry?.options_min ?? [5, 8, 10, 15, 20, 30];
 
@@ -260,45 +236,6 @@ function OverviewTab() {
               </button>
             ))}
           </div>
-        </div>
-      </div>
-
-      {/* ---- Billing / Wallet master switch ---- */}
-      <div className={cn(
-        "glass-premium p-5 rounded-xl border space-y-3 transition",
-        billingOn ? "border-neon-green/30" : "border-neon-magenta/30"
-      )}>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex-1 min-w-[260px]">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <Wallet className={cn("w-4 h-4", billingOn ? "text-neon-green" : "text-neon-magenta")} />
-              TG Bot Billing &amp; Wallet
-            </h3>
-            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              Master switch for the Telegram bot's revenue system. When <b>OFF</b>:
-              wallet balance is hidden, no per-OTP charges, no top-ups required —
-              users get unlimited FREE access to all enabled ranges. Range rates stay
-              saved so you can flip back ON anytime without re-configuring.
-            </p>
-            <p className="text-[11px] mt-2 font-mono">
-              Status: <span className={cn("font-semibold", billingOn ? "text-neon-green" : "text-neon-magenta")}>
-                {billingOn ? "● BILLING ENABLED (wallet + charges)" : "○ FREE MODE (no charges)"}
-              </span>
-            </p>
-          </div>
-          <button
-            onClick={toggleBilling}
-            disabled={savingBilling || !cfg}
-            className={cn(
-              "px-5 py-2.5 rounded-lg text-sm font-bold border transition disabled:opacity-50 flex items-center gap-2",
-              billingOn
-                ? "bg-neon-magenta/15 border-neon-magenta/40 text-neon-magenta hover:bg-neon-magenta/25"
-                : "bg-neon-green/15 border-neon-green/40 text-neon-green hover:bg-neon-green/25"
-            )}
-          >
-            {billingOn ? <><ToggleLeft className="w-4 h-4" /> Turn OFF (FREE mode)</>
-                       : <><ToggleRight className="w-4 h-4" /> Turn ON (charge per OTP)</>}
-          </button>
         </div>
       </div>
     </div>
@@ -412,13 +349,13 @@ function RangesTab() {
                       className="bg-white/[0.04] border border-white/10 rounded px-2 py-1 text-xs"
                     >
                       <option value="">—</option>
-                      <option value="facebook">[FB] Facebook</option>
-                      <option value="whatsapp">[WA] WhatsApp</option>
-                      <option value="telegram">[TG] Telegram</option>
-                      <option value="tiktok">[TT] TikTok</option>
-                      <option value="instagram">[IG] Instagram</option>
-                      <option value="google">[GG] Google</option>
-                      <option value="other">[SMS] Other</option>
+                      <option value="facebook">🟦 Facebook</option>
+                      <option value="whatsapp">🟢 WhatsApp</option>
+                      <option value="telegram">✈️ Telegram</option>
+                      <option value="tiktok">🎵 TikTok</option>
+                      <option value="instagram">📷 Instagram</option>
+                      <option value="google">🔍 Google</option>
+                      <option value="other">📡 Other</option>
                     </select>
                   </td>
                   <td className="py-2.5 px-4 text-right">
@@ -622,11 +559,6 @@ function BroadcastTab() {
         </h3>
         <p className="text-xs text-muted-foreground">
           HTML supported: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, <code>&lt;a&gt;</code>. Sent at 30 msg/sec.
-        </p>
-        <p className="text-[11px] text-neon-cyan/80 bg-neon-cyan/[0.04] border border-neon-cyan/20 rounded-md px-3 py-2">
-          📣 Broadcasts are sent as <b>private DMs</b> to every active TG user <b>and</b> mirrored to the
-          configured public channel (Overview → <code>tg_public_channel</code>). Users who never opened the bot
-          privately will only see it in the channel.
         </p>
         <textarea
           value={msg} onChange={e => setMsg(e.target.value)} rows={5}

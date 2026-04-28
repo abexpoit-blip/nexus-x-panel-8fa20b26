@@ -1,25 +1,9 @@
 // API client for nexus-backend
 import { DEMO_USERS, demoData } from "./demoData";
 
-const rawConfiguredApiBase = (import.meta.env.VITE_API_URL as string) || "";
-// Always use the dedicated API subdomain in production. The main domain
-// (nexus-x.site) does NOT proxy /api → backend; only api.nexus-x.site does.
-// Using same-origin caused requests to hit the SPA index.html and hang.
-const DEFAULT_API_BASE = "https://api.nexus-x.site/api";
-const FALLBACK_BASE = "https://api.nexus-x.site/api";
-const configuredApiBase = rawConfiguredApiBase.replace(/\/+$/, "");
-const isKnownBadMainDomainApi = /^https:\/\/(www\.)?nexus-x\.site\/api$/i.test(configuredApiBase);
-const BASE = (isKnownBadMainDomainApi ? DEFAULT_API_BASE : (configuredApiBase || DEFAULT_API_BASE)).replace(/\/+$/, "");
+const BASE = (import.meta.env.VITE_API_URL as string) || "https://api.nexus-x.site/api";
 const TOKEN_KEY = "nexus_token";
 const DEMO_KEY = "nexus_demo_mode";
-const REQUEST_TIMEOUT_MS = Math.max(5000, +(import.meta.env.VITE_API_TIMEOUT_MS || 15000));
-const LONG_REQUEST_TIMEOUT_MS = Math.max(REQUEST_TIMEOUT_MS, +(import.meta.env.VITE_API_LONG_TIMEOUT_MS || 190000));
-
-function timeoutForPath(path: string) {
-  return /\/(scrape-now|sync-live|restart|start|stop|scrape-numbers)$/.test(path) || /\/autopool\/[^/]+\/run$/.test(path)
-    ? LONG_REQUEST_TIMEOUT_MS
-    : REQUEST_TIMEOUT_MS;
-}
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY),
@@ -32,23 +16,6 @@ export const demoMode = {
   enable: () => localStorage.setItem(DEMO_KEY, "true"),
   disable: () => localStorage.removeItem(DEMO_KEY),
 };
-
-// Typed API error — carries HTTP status + machine-readable `code` from the
-// backend (e.g. 'PROVIDER_DISABLED') so callers can switch on intent
-// instead of regex-matching the human-readable message.
-export class ApiError extends Error {
-  status: number;
-  code?: string;
-  data: unknown;
-  constructor(message: string, status: number, data: unknown) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.data = data;
-    const c = (data as { code?: unknown })?.code;
-    if (typeof c === "string") this.code = c;
-  }
-}
 
 // In-memory IMS bot state for demo mode (preview without backend)
 const demoImsState = (() => {
@@ -123,45 +90,18 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
     token = null;
   }
 
-  const bases = BASE !== FALLBACK_BASE
-    ? [BASE, FALLBACK_BASE]
-    : [BASE];
-  let lastError: unknown = null;
-
-  for (const base of bases) {
-    const controller = new AbortController();
-    const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutForPath(path));
-    try {
-      const res = await fetch(`${base}${path}`, {
-      ...opts,
-      credentials: "include",                    // ← send/receive httpOnly cookie
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(opts.headers || {}),
-      },
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = (data as { error?: string }).error || `Request failed: ${res.status}`;
-        throw new ApiError(msg, res.status, data);
-      }
-      return data as T;
-    } catch (error) {
-      lastError = error;
-      const canFallback = bases.length > 1 && base !== bases[bases.length - 1];
-      if (!canFallback || error instanceof ApiError) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          throw new ApiError("Server took too long to respond. Please try again.", 504, { error: "Request timeout" });
-        }
-        throw error;
-      }
-    } finally {
-      globalThis.clearTimeout(timeoutId);
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Request failed");
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    credentials: "include",                    // ← send/receive httpOnly cookie
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as any).error || `Request failed: ${res.status}`);
+  return data as T;
 }
 
 /** Map an API path to a demo response. Returns undefined if no demo handler. */
@@ -321,23 +261,6 @@ export type Notification = {
   id: number; user_id: number | null; title: string; message: string;
   type: string; is_read: number; created_at: number;
 };
-export type OtpDeliveryRow = {
-  id: number; ts: number; event: string;
-  phone_number: string | null; otp_code: string | null;
-  endpoint: string | null; currency: string | null; detail: string | null;
-  allocation_id: number | null; user_id: number | null;
-  agent_username: string | null;
-  allocation_status: string | null;
-  allocation_range: string | null;
-  allocated_at: number | null;
-  otp_received_at: number | null;
-};
-export type OtpDeliveriesResponse = {
-  rows: OtpDeliveryRow[];
-  stats: { scraped: number; matched: number; credited: number; rejected: number; failures: number };
-  since: number;
-  provider: string;
-};
 export type AuditLog = {
   id: number; user_id: number | null; username?: string; action: string;
   target_type?: string; target_id?: string | number; meta?: string;
@@ -351,12 +274,8 @@ export type Session = {
 
 export const api = {
   // Auth
-  login: (username: string, password: string, surface: "agent" | "admin" = "agent") =>
-    request<{ token: string; user: any }>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-      headers: { "X-Login-Surface": surface },
-    }),
+  login: (username: string, password: string) =>
+    request<{ token: string; user: any }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   register: (body: { username: string; password: string; full_name?: string; phone?: string; telegram?: string }) =>
     request<{ pending?: boolean; message?: string; token?: string; user?: any }>("/auth/register", { method: "POST", body: JSON.stringify(body) }),
   me: () => request<{ user: any; impersonator?: { id: number; username: string } | null }>("/auth/me"),
@@ -379,20 +298,10 @@ export const api = {
     request<{ allocated: any[]; errors: string[] }>("/numbers/get", { method: "POST", body: JSON.stringify(body) }),
   imsRanges: () => request<{ ranges: { name: string; count: number }[] }>("/numbers/ims/ranges"),
   msiRanges: () => request<{ ranges: { name: string; count: number }[] }>("/numbers/msi/ranges"),
-  // Unified pool across every enabled bot (ims/msi/iprn/iprn_sms/numpanel).
-  // Each entry's `key` is "<providerId>::<rangeName>" and is what the agent
-  // passes back as `range` when calling getNumber({ provider: 'all', range: key }).
-  allRanges: () => request<{ ranges: {
-    key: string; name: string; range: string; provider: string;
-    provider_label: string; country_code: string | null;
-    country_name?: string | null; count: number; hot?: boolean;
-  }[] }>("/numbers/all/ranges"),
   imsAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/ims/pool", { method: "POST", body: JSON.stringify(body) }),
   msiAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
     request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/msi/pool", { method: "POST", body: JSON.stringify(body) }),
-  seven1telAddPool: (body: { numbers: string[]; range: string; country_code?: string }) =>
-    request<{ added: number; skipped: number; invalid: number; range: string }>("/numbers/seven1tel/pool", { method: "POST", body: JSON.stringify(body) }),
   myNumbers: () => request<{ numbers: Allocation[]; recent_window_hours?: number; otp_expiry_sec?: number; server_now?: number }>("/numbers/my"),
   numberHistory: (params: { page?: number; page_size?: number; q?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams();
@@ -450,44 +359,6 @@ export const api = {
     };
   }>("/numbers/summary"),
   syncOtp: () => request<{ updated: number }>("/numbers/sync", { method: "POST" }),
-  // OTP delivery audit log — agent sees their own scrape→match→credit
-  // events; admin sees the global feed (incl. unmatched / failures).
-  otpAudit: (params: { limit?: number; provider?: string } = {}) => {
-    const qs = new URLSearchParams();
-    if (params.limit) qs.set("limit", String(params.limit));
-    if (params.provider) qs.set("provider", params.provider);
-    const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return request<{
-      rows: Array<{
-        id: number; ts: number; provider: string; event: string;
-        user_id: number | null; allocation_id: number | null;
-        phone_number: string | null; otp_code: string | null;
-        rows_seen: number | null; matches_found: number | null;
-        endpoint: string | null; currency: string | null; detail: string | null;
-      }>;
-      stats_24h: { scrapes: number; failures: number; matched: number; credited: number; unmatched: number };
-    }>(`/numbers/otp-audit${suffix}`);
-  },
-  // Per-bot OTP delivery feed (admin only). Joined with allocations + users
-  // so the UI can show "OTP X went to agent Y, status: credited/rejected".
-  iprnSmsDeliveries: (params: { limit?: number; event?: string; q?: string; sinceHours?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (params.limit) qs.set("limit", String(params.limit));
-    if (params.event) qs.set("event", params.event);
-    if (params.q) qs.set("q", params.q);
-    if (params.sinceHours) qs.set("since", String(Math.floor(Date.now() / 1000) - params.sinceHours * 3600));
-    const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return request<OtpDeliveriesResponse>(`/admin/iprn-sms-otp-deliveries${suffix}`);
-  },
-  iprnSmsV2Deliveries: (params: { limit?: number; event?: string; q?: string; sinceHours?: number } = {}) => {
-    const qs = new URLSearchParams();
-    if (params.limit) qs.set("limit", String(params.limit));
-    if (params.event) qs.set("event", params.event);
-    if (params.q) qs.set("q", params.q);
-    if (params.sinceHours) qs.set("since", String(Math.floor(Date.now() / 1000) - params.sinceHours * 3600));
-    const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return request<OtpDeliveriesResponse>(`/admin/iprn-sms-v2-otp-deliveries${suffix}`);
-  },
   pricing: () => request<{ pricing: { id: number; name: string; code: string; flag: string; price_bdt: number; operator_count: number }[] }>("/numbers/pricing"),
 
   // Rates
@@ -608,17 +479,6 @@ export const api = {
     leaderboard: () => request<{ leaderboard: { id: number; username: string; otp_count: number; numbers_used?: number; earnings_bdt?: number }[] }>("/admin/leaderboard"),
     commissionTrend: (days = 14) => request<{ series: { label: string; value: number; count: number }[] }>(`/admin/commission-trend?days=${days}`),
     allocations: () => request<{ allocations: Allocation[] }>("/admin/allocations"),
-    poolInspector: () => request<{ countries: {
-      country_code: string;
-      country_name: string;
-      inferred: boolean;
-      total: number;
-      ranges: {
-        range: string;
-        total: number;
-        bots: { provider: string; label: string; count: number }[];
-      }[];
-    }[] }>("/admin/pool-inspector"),
     imsStatus: () => request<{ status: any }>("/admin/ims-status"),
     imsRestart: () => request<{ ok: boolean }>("/admin/ims-restart", { method: "POST" }),
     imsStart: () => request<{ ok: boolean }>("/admin/ims-start", { method: "POST" }),
@@ -709,72 +569,9 @@ export const api = {
     msiRangeMetaDelete: (prefix: string) =>
       request<{ ok: boolean }>(`/admin/msi-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
 
-    // ---- Seven1Tel Bot (same /ints panel as MSI) ----
-    seven1telCredentials: () => request<{
-      enabled: boolean; base_url: string; username: string;
-      password_masked: string; has_password: boolean;
-      source: { username: string; password: string };
-    }>("/admin/seven1tel-credentials"),
-    seven1telCredentialsSave: (body: { username?: string; password?: string; base_url?: string; enabled?: boolean }) =>
-      request<{ ok: boolean }>("/admin/seven1tel-credentials", { method: "PUT", body: JSON.stringify(body) }),
-    seven1telOtpInterval: () => request<{ interval_sec: number; source: string; options: number[]; min: number; max: number }>("/admin/seven1tel-otp-interval"),
-    seven1telOtpIntervalSave: (interval_sec: number) =>
-      request<{ ok: boolean; interval_sec: number }>("/admin/seven1tel-otp-interval", { method: "PUT", body: JSON.stringify({ interval_sec }) }),
-    seven1telCookiesStatus: () =>
-      request<{ has_cookies: boolean; count: number; saved_at: number | null }>("/admin/seven1tel-cookies"),
-    seven1telCookiesSave: (cookies: string) =>
-      request<{ ok: boolean }>("/admin/seven1tel-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
-    seven1telCookiesClear: () =>
-      request<{ ok: boolean }>("/admin/seven1tel-cookies", { method: "DELETE" }),
-    seven1telStatus: () => request<{ status: any }>("/admin/seven1tel-status"),
-    seven1telRestart: () => request<{ ok: boolean }>("/admin/seven1tel-restart", { method: "POST" }),
-    seven1telStart: () => request<{ ok: boolean }>("/admin/seven1tel-start", { method: "POST" }),
-    seven1telStop: () => request<{ ok: boolean }>("/admin/seven1tel-stop", { method: "POST" }),
-    seven1telScrapeNow: () => request<{ ok: boolean; added?: number; otps?: number; error?: string }>("/admin/seven1tel-scrape-now", { method: "POST" }),
-    seven1telSyncLive: () => request<{ ok: boolean; added?: number; removed?: number; kept?: number; scraped?: number; ranges?: string[]; error?: string }>("/admin/seven1tel-sync-live", { method: "POST" }),
-    seven1telPoolBreakdown: () => request<{
-      ranges: {
-        name: string; count: number; last_added: number; first_added?: number;
-        custom_name: string | null; tag_color: string | null; priority: number | null;
-        request_override: number | null; notes: string | null;
-        disabled: number | null; service_tag: string | null;
-      }[];
-      totalActive: number; totalUsed?: number;
-    }>("/admin/seven1tel-pool-breakdown"),
-    seven1telRangeMetaSave: (body: {
-      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
-      priority?: number | null; request_override?: number | null; notes?: string | null;
-      disabled?: boolean; service_tag?: string | null;
-    }) => request<{ ok: boolean }>("/admin/seven1tel-range-meta", { method: "PUT", body: JSON.stringify(body) }),
-    seven1telRangeMetaDelete: (prefix: string) =>
-      request<{ ok: boolean }>(`/admin/seven1tel-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
-
-    // ---- IPRN-SMS range meta (shared rangeMetaRoutes('iprn_sms')) ----
-    iprnSmsRangeMetaSave: (body: {
-      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
-      priority?: number | null; request_override?: number | null; notes?: string | null;
-      disabled?: boolean; service_tag?: string | null;
-    }) => request<{ ok: boolean }>("/admin/iprn_sms-range-meta", { method: "PUT", body: JSON.stringify(body) }),
-    iprnSmsRangeMetaDelete: (prefix: string) =>
-      request<{ ok: boolean }>(`/admin/iprn_sms-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
-
-    // ---- IPRN-SMS V2 range meta (shared rangeMetaRoutes('iprn_sms_v2')) ----
-    iprnSmsV2RangeMetaSave: (body: {
-      range_prefix: string; custom_name?: string | null; tag_color?: string | null;
-      priority?: number | null; request_override?: number | null; notes?: string | null;
-      disabled?: boolean; service_tag?: string | null;
-    }) => request<{ ok: boolean }>("/admin/iprn_sms_v2-range-meta", { method: "PUT", body: JSON.stringify(body) }),
-    iprnSmsV2RangeMetaDelete: (prefix: string) =>
-      request<{ ok: boolean }>(`/admin/iprn_sms_v2-range-meta/${encodeURIComponent(prefix)}`, { method: "DELETE" }),
-
     // ---- Global provider settings ----
     systemHealth: () => request<SystemHealth>("/admin/system-health"),
     providerStatus: () => request<{ providers: ProviderStatus[] }>("/admin/provider-status"),
-    providerToggle: (id: string, enabled: boolean) =>
-      request<{ ok: boolean; id: string; enabled: boolean; message: string }>("/admin/provider-toggle", {
-        method: "PUT",
-        body: JSON.stringify({ id, enabled }),
-      }),
     otpExpiry: () => request<{ expiry_min: number; source: string; options_min: number[] }>("/admin/otp-expiry"),
     otpExpirySave: (expiry_min: number) =>
       request<{ ok: boolean; expiry_min: number }>("/admin/otp-expiry", {
@@ -843,134 +640,6 @@ export const api = {
       request<{ ok: boolean }>("/admin/numpanel-cookies", { method: "PUT", body: JSON.stringify({ cookies }) }),
     numpanelCookiesClear: () =>
       request<{ ok: boolean }>("/admin/numpanel-cookies", { method: "DELETE" }),
-  },
-
-  // ===== Auto-pool scheduler (per-bot scrape interval / TTL / size cap) =====
-  autopool: {
-    list: () => request<{ bots: Array<{
-      botId: string; label: string;
-      config: { enabled: boolean; interval_min: number; ttl_min: number; max_size: number };
-      pool: number;
-      lastRunAt: number | null;
-      lastResult: null | {
-        addedRequested: boolean; scrapeError: string | null;
-        pruned: number; capped: number; poolBefore: number; poolAfter: number;
-      };
-      running: boolean;
-      limits: { interval_min: { min: number; max: number }; ttl_min: { min: number; max: number }; max_size: { min: number; max: number } };
-      defaults: { enabled: boolean; interval_min: number; ttl_min: number; max_size: number };
-    }> }>("/admin/autopool"),
-    get: (botId: string) => request<{ bot: any }>(`/admin/autopool/${botId}`),
-    save: (botId: string, body: { enabled?: boolean; interval_min?: number; ttl_min?: number; max_size?: number }) =>
-      request<{ ok: boolean; config: any }>(`/admin/autopool/${botId}`, { method: "PUT", body: JSON.stringify(body) }),
-    runNow: (botId: string) =>
-      request<{ ok: boolean; result?: any; error?: string }>(`/admin/autopool/${botId}/run`, { method: "POST" }),
-  },
-
-  // ===== IPRN-SMS Bot admin (panel.iprn-sms.com — Symfony, JSON API + ZIP) =====
-  iprnSms: {
-    status: () => request<{ status: any }>("/admin/iprn-sms-status"),
-    restart: () => request<{ ok: boolean }>("/admin/iprn-sms-restart", { method: "POST" }),
-    start: () => request<{ ok: boolean }>("/admin/iprn-sms-start", { method: "POST" }),
-    stop: () => request<{ ok: boolean }>("/admin/iprn-sms-stop", { method: "POST" }),
-    scrapeNow: () => request<{ ok: boolean; added?: number; error?: string }>("/admin/iprn-sms-scrape-now", { method: "POST" }),
-    poolBreakdown: () => request<{
-      ranges: Array<{
-        name: string; range_name: string; count: number;
-        last_added: number | null; first_added: number | null;
-        custom_name: string | null; tag_color: string | null; priority: number | null;
-        request_override: number | null; notes: string | null;
-        disabled: number; service_tag: string | null;
-      }>;
-      totalPool: number; totalActive: number; totalUsed: number;
-    }>("/admin/iprn-sms-pool-breakdown"),
-    credentials: () => request<{
-      username: string; password_set: boolean; base_url: string;
-      sms_type: string; enabled: boolean;
-      sources: { username: string; password: string };
-    }>("/admin/iprn-sms-credentials"),
-    credentialsSave: (body: { username?: string; password?: string; base_url?: string; sms_type?: string; enabled?: boolean }) =>
-      request<{ ok: boolean }>("/admin/iprn-sms-credentials", { method: "PUT", body: JSON.stringify(body) }),
-    cookies: () =>
-      request<{ has_cookies: boolean; count: number; saved_at: number | null; names?: string[] }>("/admin/iprn-sms-cookies"),
-    cookiesClear: () =>
-      request<{ ok: boolean }>("/admin/iprn-sms-cookies", { method: "DELETE" }),
-    testLogin: () =>
-      request<{ ok: boolean; username?: string; base_url?: string; loggedIn?: boolean; latency_ms: number; error?: string }>(
-        "/admin/iprn-sms-test-login",
-        { method: "POST" },
-      ),
-    numbers: (params: { status?: string; q?: string; limit?: number; offset?: number } = {}) => {
-      const qs = new URLSearchParams();
-      if (params.status) qs.set("status", params.status);
-      if (params.q) qs.set("q", params.q);
-      if (params.limit != null) qs.set("limit", String(params.limit));
-      if (params.offset != null) qs.set("offset", String(params.offset));
-      const tail = qs.toString();
-      return request<{
-        rows: Array<{
-          id: number; phone_number: string; range_name: string | null;
-          country_code: string | null; status: string;
-          allocated_at: number; user_id: number; otp: string | null;
-          username: string | null;
-        }>;
-        total: number; limit: number; offset: number;
-        counts: Record<string, number>;
-      }>(`/admin/iprn-sms-numbers${tail ? `?${tail}` : ""}`);
-    },
-  },
-
-  // ===== IPRN-SMS V2 Bot admin (second account on panel.iprn-sms.com) =====
-  iprnSmsV2: {
-    status: () => request<{ status: any }>("/admin/iprn-sms-v2-status"),
-    restart: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-restart", { method: "POST" }),
-    start: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-start", { method: "POST" }),
-    stop: () => request<{ ok: boolean }>("/admin/iprn-sms-v2-stop", { method: "POST" }),
-    scrapeNow: () => request<{ ok: boolean; added?: number; error?: string }>("/admin/iprn-sms-v2-scrape-now", { method: "POST" }),
-    poolBreakdown: () => request<{
-      ranges: Array<{
-        name: string; range_name: string; count: number;
-        last_added: number | null; first_added: number | null;
-        custom_name: string | null; tag_color: string | null; priority: number | null;
-        request_override: number | null; notes: string | null;
-        disabled: number; service_tag: string | null;
-      }>;
-      totalPool: number; totalActive: number; totalUsed: number;
-    }>("/admin/iprn-sms-v2-pool-breakdown"),
-    credentials: () => request<{
-      username: string; password_set: boolean; base_url: string;
-      sms_type: string; enabled: boolean;
-      sources: { username: string; password: string };
-    }>("/admin/iprn-sms-v2-credentials"),
-    credentialsSave: (body: { username?: string; password?: string; base_url?: string; sms_type?: string; enabled?: boolean }) =>
-      request<{ ok: boolean }>("/admin/iprn-sms-v2-credentials", { method: "PUT", body: JSON.stringify(body) }),
-    cookies: () =>
-      request<{ has_cookies: boolean; count: number; saved_at: number | null; names?: string[] }>("/admin/iprn-sms-v2-cookies"),
-    cookiesClear: () =>
-      request<{ ok: boolean }>("/admin/iprn-sms-v2-cookies", { method: "DELETE" }),
-    testLogin: () =>
-      request<{ ok: boolean; username?: string; base_url?: string; loggedIn?: boolean; latency_ms: number; error?: string }>(
-        "/admin/iprn-sms-v2-test-login",
-        { method: "POST" },
-      ),
-    numbers: (params: { status?: string; q?: string; limit?: number; offset?: number } = {}) => {
-      const qs = new URLSearchParams();
-      if (params.status) qs.set("status", params.status);
-      if (params.q) qs.set("q", params.q);
-      if (params.limit != null) qs.set("limit", String(params.limit));
-      if (params.offset != null) qs.set("offset", String(params.offset));
-      const tail = qs.toString();
-      return request<{
-        rows: Array<{
-          id: number; phone_number: string; range_name: string | null;
-          country_code: string | null; status: string;
-          allocated_at: number; user_id: number; otp: string | null;
-          username: string | null;
-        }>;
-        total: number; limit: number; offset: number;
-        counts: Record<string, number>;
-      }>(`/admin/iprn-sms-v2-numbers${tail ? `?${tail}` : ""}`);
-    },
   },
 
   // ===== Telegram Bot admin =====
@@ -1048,7 +717,6 @@ export const api = {
       tg_required_otp_group: string;
       tg_required_otp_group_chat: string;
       tg_terms_text: string;
-      tg_billing_enabled: string;
     }>("/admin/tgbot/config"),
     saveConfig: (body: {
       tg_public_channel?: string;
@@ -1057,7 +725,6 @@ export const api = {
       tg_required_otp_group?: string;
       tg_required_otp_group_chat?: string;
       tg_terms_text?: string;
-      tg_billing_enabled?: string;
     }) => request<{ ok: boolean }>("/admin/tgbot/config", {
       method: "PUT", body: JSON.stringify(body),
     }),
@@ -1096,8 +763,6 @@ export interface ProviderStatus {
   currency?: string;
   lastError?: string | null;
   otpHistoryCount?: number;
-  enabled?: boolean;
-  togglable?: boolean;
 }
 
 export interface WaitStat {

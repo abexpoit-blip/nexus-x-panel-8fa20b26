@@ -39,7 +39,7 @@ router.post('/topup', authRequired, adminOnly, (req, res) => {
       VALUES (?, ?, 'topup', ?, ?, ?)
     `).run(user_id, amt, method, reference || null, note || null);
   });
-  tx.immediate();
+  tx();
 
   logFromReq(req, 'topup', { targetType: 'user', targetId: user_id, meta: { amount: amt } });
   res.json({ ok: true });
@@ -165,7 +165,7 @@ router.post('/withdrawals/request', authRequired, (req, res) => {
     }
     return r.lastInsertRowid;
   });
-  const id = tx.immediate();
+  const id = tx();
 
   logFromReq(req, 'withdrawal_request', { targetType: 'withdrawal', targetId: id, meta: { amount: amt, method } });
   res.status(201).json({ id, fee, net: +(amt - fee).toFixed(2) });
@@ -199,7 +199,7 @@ router.post('/withdrawals/:id/approve', authRequired, adminOnly, (req, res) => {
       `Your withdrawal of ৳${w.amount_bdt.toFixed(2)} via ${w.method} has been processed.${admin_note ? ' Note: ' + admin_note : ''}`
     );
   });
-  tx.immediate();
+  tx();
 
   logFromReq(req, 'withdrawal_approved', { targetType: 'withdrawal', targetId: id });
   res.json({ ok: true });
@@ -225,7 +225,7 @@ router.post('/withdrawals/:id/reject', authRequired, adminOnly, (req, res) => {
       `Your withdrawal of ৳${w.amount_bdt.toFixed(2)} via ${w.method} was rejected.${admin_note ? ` Reason: ${admin_note}` : ''}`
     );
   });
-  tx.immediate();
+  tx();
 
   logFromReq(req, 'withdrawal_rejected', { targetType: 'withdrawal', targetId: id });
   res.json({ ok: true });

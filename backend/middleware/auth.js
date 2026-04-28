@@ -31,18 +31,10 @@ function signToken(user) {
 
 function recordSession(userId, token, req) {
   const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
-  db.bestEffortWrite('record session', () => {
-    db.prepare(`
-      INSERT INTO sessions (user_id, token_hash, ip, user_agent, expires_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(token_hash) DO UPDATE SET
-        user_id = excluded.user_id,
-        ip = excluded.ip,
-        user_agent = excluded.user_agent,
-        expires_at = excluded.expires_at,
-        last_seen_at = strftime('%s','now')
-    `).run(userId, hashToken(token), req.ip || null, req.headers['user-agent'] || null, expiresAt);
-  });
+  db.prepare(`
+    INSERT INTO sessions (user_id, token_hash, ip, user_agent, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, hashToken(token), req.ip || null, req.headers['user-agent'] || null, expiresAt);
 }
 
 // Cookie name used for httpOnly JWT
@@ -90,10 +82,8 @@ function authRequired(req, res, next) {
     if (payload.act) req.impersonator = payload.act; // { id, username }
 
     // Update session last_seen (best effort)
-    db.bestEffortWrite('touch session', () => {
-      db.prepare("UPDATE sessions SET last_seen_at = strftime('%s','now') WHERE token_hash = ?")
-        .run(hashToken(token));
-    }, 250);
+    db.prepare("UPDATE sessions SET last_seen_at = strftime('%s','now') WHERE token_hash = ?")
+      .run(hashToken(token));
 
     next();
   } catch (e) {

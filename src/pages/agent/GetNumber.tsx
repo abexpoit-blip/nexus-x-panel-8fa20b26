@@ -1,21 +1,11 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Hash, Copy, Check, Download, Search, ChevronDown, Wallet, AlertTriangle, Layers, Server, ChevronLeft, ChevronRight, Bell, BellOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 interface AllocatedNumber {
   id: number;
@@ -49,60 +39,32 @@ interface Range {
 // Agents see "Server A/B/C/D" — real provider names (acchub/ims/msi/numpanel) are hidden.
 // The actual list shown is filtered against the backend `/numbers/providers` response,
 // so disabled bots disappear from the picker entirely (no dead options for agents).
-export const SERVER_LABELS: Record<string, string> = {
+const SERVER_LABELS: Record<string, string> = {
   acchub: "Server A",
   ims: "Server B",
   msi: "Server C",
   numpanel: "Server D",
-  iprn: "Server E",
-  iprn_sms: "Server F",
-  all: "All Servers",
 };
-type ServerId = "acchub" | "ims" | "msi" | "numpanel" | "iprn" | "iprn_sms" | "all";
-
-// Unified-pool entry from /numbers/all/ranges. `name` is already the
-// "Country — Range (Server X)" label so we render it as-is.
-interface AllRange {
-  key: string;          // <providerId>::<rangeName>
-  name: string;         // display label
-  range: string;
-  provider: string;
-  provider_label: string;
-  country_code: string | null;
-  country_name?: string | null;
-  count: number;
-  hot?: boolean;
-}
+type ServerId = "acchub" | "ims" | "msi" | "numpanel";
 
 const AgentGetNumber = () => {
   const { user, maintenanceMode, maintenanceMessage } = useAuth();
-  // Agents use the unified pool exclusively (Country → Range, no Server tabs).
-  // Admins still see the legacy Server picker so they can use AccHub + audit
-  // which underlying bot a range belongs to.
-  const isAdmin = user?.role === "admin";
-  const [provider, setProvider] = useState<ServerId>(isAdmin ? "acchub" : "all");
+  const [provider, setProvider] = useState<ServerId>("acchub");
   // Servers that the BACKEND currently has enabled (filtered by /numbers/providers).
   // Disabled bots simply disappear from the picker so agents never see dead options.
   const [availableServers, setAvailableServers] = useState<{ id: ServerId; label: string }[]>([
     { id: "acchub", label: SERVER_LABELS.acchub },
   ]);
-  // True once /numbers/providers has resolved at least once. Lets us
-  // distinguish "still loading" from "backend returned zero enabled
-  // providers" so the empty-state banner only shows in the latter case.
-  const [providersLoaded, setProvidersLoaded] = useState(false);
   const [countries, setCountries] = useState<Country[]>([]);
   const [countryId, setCountryId] = useState<number | "">("");
   const [operators, setOperators] = useState<Operator[]>([]);
   const [operatorId, setOperatorId] = useState<number | "">("");
   const [ranges, setRanges] = useState<Range[]>([]);
-  // Unified-pool ranges (only used when provider === 'all')
-  const [allRanges, setAllRanges] = useState<AllRange[]>([]);
   const [rangeName, setRangeName] = useState<string>("");
   const [rangeSearch, setRangeSearch] = useState("");
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeRef = useRef<HTMLDivElement>(null);
   const [numbers, setNumbers] = useState<AllocatedNumber[]>([]);
-  const numbersRef = useRef<AllocatedNumber[]>([]);
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copiedOtpId, setCopiedOtpId] = useState<number | null>(null);
@@ -123,37 +85,6 @@ const AgentGetNumber = () => {
   useEffect(() => {
     localStorage.setItem("nx_auto_release", autoRelease ? "1" : "0");
   }, [autoRelease]);
-  // "Don't ask again" preference for the All-Servers confirmation prompt.
-  // Persisted in localStorage so the agent's choice survives reloads.
-  const [skipAllConfirm, setSkipAllConfirm] = useState<boolean>(
-    () => localStorage.getItem("nx_skip_all_confirm") === "1"
-  );
-  useEffect(() => {
-    localStorage.setItem("nx_skip_all_confirm", skipAllConfirm ? "1" : "0");
-  }, [skipAllConfirm]);
-  // Styled confirmation dialog for the unified pool — replaces the native
-  // browser confirm() that looked alien and got cut off on small viewports.
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  // Persist the agent's chosen range key alongside the country so the
-  // selection sticks across reloads.
-  useEffect(() => {
-    if (provider === "all" && rangeName) localStorage.setItem("nx_all_range", rangeName);
-  }, [provider, rangeName]);
-  // Sticky Country + Range selection for agent unified-pool flow.
-  // We persist the country code (e.g. "TJ") and the full range KEY
-  // ("iprn_sms::99293515XXXX(1)") so the choice survives reloads — exactly
-  // what the user asked for: "stick country and ranges until they change".
-  const [allCountry, setAllCountry] = useState<string>(
-    () => localStorage.getItem("nx_all_country") || ""
-  );
-  useEffect(() => {
-    if (allCountry) localStorage.setItem("nx_all_country", allCountry);
-    else localStorage.removeItem("nx_all_country");
-  }, [allCountry]);
-  // Country combobox state (separate from the legacy AccHub country picker)
-  const [allCountryOpen, setAllCountryOpen] = useState(false);
-  const [allCountrySearch, setAllCountrySearch] = useState("");
-  const allCountryRef = useRef<HTMLDivElement>(null);
   // Browser desktop notification permission state
   const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
     () => (typeof Notification !== "undefined" ? Notification.permission : "denied")
@@ -236,49 +167,21 @@ const AgentGetNumber = () => {
   }, []);
 
   // Pull the list of enabled providers from the backend so disabled bots are
-  // hidden from the Source picker entirely. Refreshed on mount, on tab
-  // focus, every 30s, and right before each allocation — so a mid-session
-  // admin toggle is reflected without the agent needing to reload.
-  const refreshProviders = useCallback(async () => {
-    try {
-      const { providers } = await api.providers();
-      const list = (providers || [])
-        .map((p) => ({ id: p.id as ServerId, label: SERVER_LABELS[p.id] || p.name || p.id }))
-        .filter((s) => SERVER_LABELS[s.id]);
-      setAvailableServers(list);
-      // Auto-switch if the current selection just got disabled.
-      // For non-admin agents, prefer 'all' when present; never auto-switch
-      // them to AccHub-only (admin tab).
-      setProvider((cur) => {
-        if (list.some((s) => s.id === cur)) return cur;
-        if (list.length === 0) return cur;
-        if (!isAdmin) {
-          const all = list.find((s) => s.id === "all");
-          if (all) return all.id;
-        }
-        return list[0].id;
-      });
-      return list;
-    } catch {
-      return null;
-    } finally {
-      setProvidersLoaded(true);
-    }
-  }, [isAdmin]);
-
+  // hidden from the Source picker entirely. Re-runs on mount.
   useEffect(() => {
-    refreshProviders();
-    const onFocus = () => refreshProviders();
-    const onVis = () => { if (document.visibilityState === "visible") refreshProviders(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVis);
-    const i = setInterval(refreshProviders, 30000);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVis);
-      clearInterval(i);
-    };
-  }, [refreshProviders]);
+    api.providers()
+      .then(({ providers }) => {
+        const list = (providers || [])
+          .map((p) => ({ id: p.id as ServerId, label: SERVER_LABELS[p.id] || p.name || p.id }))
+          .filter((s) => SERVER_LABELS[s.id]);
+        if (list.length === 0) return;
+        setAvailableServers(list);
+        // If the currently selected provider is no longer enabled, fall back to first available.
+        if (!list.some((s) => s.id === provider)) setProvider(list[0].id);
+      })
+      .catch(() => {/* keep default Server A */});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Format a duration in seconds: "12s" / "1m 04s" / "1h 02m"
   const fmtDuration = (sec: number) => {
@@ -315,10 +218,6 @@ const AgentGetNumber = () => {
     api.myNumbers().then(({ numbers }) => setNumbers(numbers as AllocatedNumber[])).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    numbersRef.current = numbers;
-  }, [numbers]);
-
   // Reload countries OR ranges whenever the agent switches Server A / B
   useEffect(() => {
     setCountryId("");
@@ -331,39 +230,16 @@ const AgentGetNumber = () => {
     } else if (provider === "msi") {
       api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => setRanges([]));
       setCountries([]);
-    } else if (provider === "all") {
-      api.allRanges().then(({ ranges }) => {
-        setAllRanges(ranges);
-        // Also feed the shared `ranges` state (using key as name) so the
-        // existing dropdown UI can render without branching everywhere.
-        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
-        // Restore last sticky selection if it's still valid.
-        const savedRange = localStorage.getItem("nx_all_range") || "";
-        if (savedRange && ranges.some((r) => r.key === savedRange)) {
-          setRangeName(savedRange);
-          // Make sure country matches the saved range so the cascade is consistent.
-          const m = ranges.find((r) => r.key === savedRange);
-          if (m?.country_code) setAllCountry(m.country_code);
-        }
-      }).catch(() => { setAllRanges([]); setRanges([]); });
-      setCountries([]);
     } else {
       setRanges([]);
-      setAllRanges([]);
       api.countries(provider).then(({ countries }) => setCountries(countries)).catch(() => setCountries([]));
     }
   }, [provider]);
 
   // Refresh range counts every 10s while a range-based server is selected
   useEffect(() => {
-    if (provider !== "ims" && provider !== "msi" && provider !== "all") return;
-    const fetcher = provider === "ims" ? api.imsRanges
-                   : provider === "msi" ? api.msiRanges
-                   : async () => {
-                       const { ranges } = await api.allRanges();
-                       setAllRanges(ranges);
-                       return { ranges: ranges.map((r) => ({ name: r.key, count: r.count })) };
-                     };
+    if (provider !== "ims" && provider !== "msi") return;
+    const fetcher = provider === "ims" ? api.imsRanges : api.msiRanges;
     const i = setInterval(() => {
       fetcher().then(({ ranges }) => setRanges(ranges)).catch(() => {});
     }, 10000);
@@ -371,7 +247,7 @@ const AgentGetNumber = () => {
   }, [provider]);
 
   useEffect(() => {
-    if (provider === "ims" || provider === "msi" || provider === "all" || !countryId) { setOperators([]); setOperatorId(""); return; }
+    if (provider === "ims" || provider === "msi" || !countryId) { setOperators([]); setOperatorId(""); return; }
     setOperatorId("");
     api.operators(provider, Number(countryId)).then(({ operators }) => setOperators(operators)).catch(() => {});
   }, [countryId, provider]);
@@ -381,7 +257,6 @@ const AgentGetNumber = () => {
     const onClick = (e: MouseEvent) => {
       if (countryRef.current && !countryRef.current.contains(e.target as Node)) setCountryOpen(false);
       if (rangeRef.current && !rangeRef.current.contains(e.target as Node)) setRangeOpen(false);
-      if (allCountryRef.current && !allCountryRef.current.contains(e.target as Node)) setAllCountryOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -397,126 +272,19 @@ const AgentGetNumber = () => {
 
   const filteredRanges = useMemo(() => {
     const q = rangeSearch.trim().toLowerCase();
-    // For unified pool, match against the friendly label (country/provider/range), not the key.
-    const labelOf = (key: string) => {
-      if (provider !== "all") return key;
-      const m = allRanges.find((x) => x.key === key);
-      return m ? m.name : key;
-    };
-    // For agents in unified-pool mode, also restrict to the chosen country.
-    let pool = ranges;
-    if (provider === "all" && allCountry) {
-      const allowedKeys = new Set(
-        allRanges.filter((r) => (r.country_code || "") === allCountry).map((r) => r.key)
-      );
-      pool = pool.filter((r) => allowedKeys.has(r.name));
-    }
-    if (!q) return pool;
-    return pool.filter((r) => labelOf(r.name).toLowerCase().includes(q));
-  }, [ranges, rangeSearch, provider, allRanges, allCountry]);
-
-  // Country list derived from the unified pool (for agent Country dropdown).
-  // Each entry shows the country name (or ISO code) + total ranges/numbers
-  // available across all underlying bots — gives the agent an at-a-glance
-  // sense of which countries actually have stock right now.
-  const allCountryList = useMemo(() => {
-    const map = new Map<string, { code: string; name: string; ranges: number; count: number }>();
-    for (const r of allRanges) {
-      const code = r.country_code || "ZZ";
-      const name = r.country_name || (code === "ZZ" ? "Other" : code);
-      const ex = map.get(code) || { code, name, ranges: 0, count: 0 };
-      ex.ranges += 1;
-      ex.count += r.count;
-      map.set(code, ex);
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [allRanges]);
-
-  const filteredAllCountries = useMemo(() => {
-    const q = allCountrySearch.trim().toLowerCase();
-    if (!q) return allCountryList;
-    return allCountryList.filter((c) =>
-      c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)
-    );
-  }, [allCountryList, allCountrySearch]);
-
-  const selectedAllCountry = allCountryList.find((c) => c.code === allCountry);
+    if (!q) return ranges;
+    return ranges.filter((r) => r.name.toLowerCase().includes(q));
+  }, [ranges, rangeSearch]);
 
   const selectedRange = ranges.find((r) => r.name === rangeName);
-  // Hot-range lookup: backend marks ranges that received ≥3 allocations in
-  // the past hour. Helps agents discover which pool numbers are actually
-  // converting right now without admin guidance.
-  const isHotRange = (rangeKey: string) => {
-    if (provider !== "all") return false;
-    return !!allRanges.find((r) => r.key === rangeKey)?.hot;
-  };
-  // Friendly label resolver. For the unified "All Servers" pool:
-  //   • Admins see the full backend label, e.g. "TJ — Tajikistan 99293515XXXX (Server F)"
-  //     so they can audit which underlying bot a range belongs to.
-  //   • Agents see ONLY country + range, e.g. "TJ — Tajikistan 99293515XXXX",
-  //     because the underlying provider is internal info they don't need.
-  const labelForRange = (key: string): string => {
-    if (provider !== "all") return key;
-    const m = allRanges.find((x) => x.key === key);
-    if (!m) return key;
-    if (isAdmin) return m.name;
-    // Strip the trailing "(Server X)" tag for non-admins
-    return m.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim();
-  };
-  // Provider tag shown next to the count badge — admin-only, so the
-  // dropdown stays consistent: "<count> avail · Server X" for admins,
-  // just "<count> avail" for agents.
-  const providerTagForRange = (key: string): string | null => {
-    if (provider !== "all" || !isAdmin) return null;
-    const m = allRanges.find((x) => x.key === key);
-    return m?.provider_label || null;
-  };
   const totalPoolSize = ranges.reduce((sum, r) => sum + r.count, 0);
-
-  // Build the confirmation summary for the unified-pool dialog
-  const confirmSummary = useMemo(() => {
-    if (provider !== "all" || !rangeName) return null;
-    const meta = allRanges.find((x) => x.key === rangeName);
-    const friendly = meta
-      ? (isAdmin ? meta.name : meta.name.replace(/\s*\(Server [A-Z]\)\s*$/i, "").trim())
-      : rangeName;
-    return {
-      friendly,
-      count: meta?.count ?? 0,
-      providerLabel: isAdmin ? meta?.provider_label || null : null,
-    };
-  }, [provider, rangeName, allRanges, isAdmin]);
 
   const handleGetNumber = async () => {
     if (maintenanceMode) {
       toast({ title: "Maintenance mode", description: maintenanceMessage, variant: "destructive" });
       return;
     }
-    // Styled confirmation for the unified "All Servers" pool — opens a
-    // themed AlertDialog instead of the native browser confirm() which
-    // looked alien and got clipped on small viewports.
-    if (provider === "all" && rangeName && !skipAllConfirm) {
-      setConfirmOpen(true);
-      return;
-    }
-    await runAllocation();
-  };
-
-  const runAllocation = async () => {
-    // Re-check enabled providers RIGHT before allocating so the agent
-    // never sends a request to a provider that just got disabled.
-    const fresh = await refreshProviders();
-    if (fresh && !fresh.some((s) => s.id === provider)) {
-      toast({
-        title: "Source disabled by admin",
-        description: fresh.length > 0
-          ? `Switched to ${fresh[0].label}. Try again.`
-          : "All providers are off right now.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (provider === "ims" || provider === "msi" || provider === "all") {
+    if (provider === "ims" || provider === "msi") {
       if (!rangeName) { toast({ title: "Select a range", variant: "destructive" }); return; }
     } else if (!countryId || !operatorId) {
       toast({ title: "Select country & operator", variant: "destructive" });
@@ -526,7 +294,7 @@ const AgentGetNumber = () => {
     try {
       const { allocated, errors } = await api.getNumber({
         provider,
-        ...(provider === "ims" || provider === "msi" || provider === "all"
+        ...(provider === "ims" || provider === "msi"
           ? { range: rangeName }
           : { country_id: Number(countryId), operator_id: Number(operatorId) }),
         count: quantity,
@@ -549,49 +317,29 @@ const AgentGetNumber = () => {
       if (errors.length) toast({ title: "Some failed", description: errors.join(", "), variant: "destructive" });
       if (provider === "ims") api.imsRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
       else if (provider === "msi") api.msiRanges().then(({ ranges }) => setRanges(ranges)).catch(() => {});
-      else if (provider === "all") api.allRanges().then(({ ranges }) => {
-        setAllRanges(ranges);
-        setRanges(ranges.map((r) => ({ name: r.key, count: r.count })));
-      }).catch(() => {});
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Dedicated state for the soft-OFF case. Backend returns
-      // { status: 403, code: 'PROVIDER_DISABLED' } so we switch on the
-      // machine code, never the human-readable text.
-      const isDisabled =
-        e instanceof ApiError && (e.code === "PROVIDER_DISABLED" || e.status === 403);
-      if (isDisabled) {
-        const after = await refreshProviders();
-        toast({
-          title: "Provider disabled mid-session",
-          description: after && after.length > 0
-            ? `${msg} Switched to ${after[0].label}.`
-            : msg,
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: "Failed", description: msg, variant: "destructive" });
-      }
+      toast({ title: "Failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
 
-  // Lightweight refresh while numbers are pending. We DO NOT trigger /numbers/sync
-  // on every tick anymore because that caused extra provider hits, duplicate race
-  // windows with background workers, and unnecessary UI lag under load.
+  // Poll OTP sync every 5s while there are pending numbers.
+  // When a poll reveals NEW OTPs (numbers that previously had no OTP but now do),
+  // we flash their rows green for 8s + toast which number got it. This makes it
+  // dead-obvious which row in a 100-number list just received its code.
   useEffect(() => {
     const pending = numbers.filter((n) => !n.otp).length;
     if (pending === 0) return;
     const interval = setInterval(async () => {
-      if (document.hidden) return;
       try {
+        await api.syncOtp();
         const { numbers: fresh, otp_expiry_sec, server_now } = await api.myNumbers();
         const freshList = fresh as AllocatedNumber[];
         if (otp_expiry_sec && otp_expiry_sec > 0) setExpirySec(otp_expiry_sec);
         if (server_now && server_now > 0) setServerDriftSec(Math.floor(Date.now() / 1000) - server_now);
         // Diff: which previously-pending IDs now have an OTP?
-        const prevPendingIds = new Set(numbersRef.current.filter((n) => !n.otp).map((n) => n.id));
+        const prevPendingIds = new Set(numbers.filter((n) => !n.otp).map((n) => n.id));
         const newlyReceived = freshList.filter((n) => n.otp && prevPendingIds.has(n.id));
         if (newlyReceived.length > 0) {
           setFlashOtpIds((prev) => {
@@ -626,7 +374,7 @@ const AgentGetNumber = () => {
         }
         setNumbers(freshList);
       } catch { /* ignore */ }
-    }, 8000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [numbers]);
 
@@ -694,11 +442,7 @@ const AgentGetNumber = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-display font-bold text-foreground">Get Number</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {isAdmin
-            ? "Search a country, pick an operator, and request a fresh number"
-            : "Pick a country and range — we'll grab the next available number from the pool"}
-        </p>
+        <p className="text-sm text-muted-foreground mt-1">Search a country, pick an operator, and request a fresh number</p>
       </div>
 
       {maintenanceMode && (
@@ -714,31 +458,8 @@ const AgentGetNumber = () => {
         </GlassCard>
       )}
 
-      {/* All providers OFF — admin has soft-disabled every bot. We show
-          this banner so the agent knows WHY the Source picker is empty
-          (instead of silently rendering a useless form). */}
-      {providersLoaded && availableServers.length === 0 && !maintenanceMode && (
-        <GlassCard className="border-destructive/40 bg-destructive/[0.06]">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-6 h-6 text-destructive shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-display font-semibold text-destructive">All providers are temporarily disabled</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Admin has switched off every number source. New allocations are paused until at least one provider is re-enabled.
-              </p>
-              <p className="text-xs text-muted-foreground mt-2">
-                Existing numbers in your live list will continue to receive OTPs normally.
-              </p>
-            </div>
-          </div>
-        </GlassCard>
-      )}
-
-      {availableServers.length > 0 && (
-      <GlassCard glow="cyan" className={cn("relative", (countryOpen || rangeOpen || allCountryOpen) ? "z-50" : "z-10")}>
-        {/* Server selector — admins only. Agents always use the unified pool
-            (Country → Range) so the Source row would just be visual noise. */}
-        {isAdmin && (
+      <GlassCard glow="cyan" className={cn("relative", (countryOpen || rangeOpen) ? "z-50" : "z-10")}>
+        {/* Server selector — Server A = AccHub, Server B = IMS (real names hidden) */}
         <div className="flex items-center gap-2 mb-4 pb-4 border-b border-white/[0.06]">
           <Server className="w-4 h-4 text-neon-cyan" />
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mr-2">Source</span>
@@ -760,210 +481,9 @@ const AgentGetNumber = () => {
             ))}
           </div>
         </div>
-        )}
 
-        {provider === "all" && isAdmin && (
-          /* Unified-pool warning + "don't ask again" toggle. We surface this
-             prominently because each range in this list belongs to ONE
-             specific underlying bot — the agent should know exactly which
-             before allocating (the dropdown labels show "Server X" too). */
-          <div className="mb-4 px-3 py-2.5 rounded-lg border border-neon-cyan/25 bg-neon-cyan/[0.05] flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 text-neon-cyan shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-foreground">
-                <span className="font-semibold">All Servers mode:</span>{" "}
-                <span className="text-muted-foreground">
-                  Pick a country and range — we'll fetch a fresh number from the
-                  matching pool. You'll be asked to confirm before every
-                  allocation so a wrong pick doesn't burn balance.
-                </span>
-              </p>
-              <label className="mt-1.5 inline-flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={skipAllConfirm}
-                  onChange={(e) => setSkipAllConfirm(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.04] accent-neon-cyan"
-                />
-                <span>Don't ask again on this device</span>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {provider === "all" && !isAdmin ? (
-          /* ============ AGENT unified flow: Country → Range → Get ============ */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_auto] gap-4 items-end">
-            {/* Country (sticky — persists in localStorage) */}
-            <div className="space-y-2 relative min-w-0" ref={allCountryRef}>
-              <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
-                <span>Country</span>
-                <span className="text-[10px] text-muted-foreground/70 font-normal">
-                  {allCountryList.length} available
-                </span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setAllCountryOpen((v) => !v)}
-                className="w-full min-h-[2.75rem] py-2 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50 flex items-center justify-between gap-2 text-left"
-              >
-                <span className={cn("min-w-0 break-words", !selectedAllCountry && "text-muted-foreground")}>
-                  {selectedAllCountry ? (
-                    <>
-                      {selectedAllCountry.name}
-                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
-                        {selectedAllCountry.count} avail
-                      </span>
-                    </>
-                  ) : allCountryList.length === 0 ? "No countries available" : "Select country..."}
-                </span>
-                <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", allCountryOpen && "rotate-180")} />
-              </button>
-              {allCountryOpen && (
-                <div className="absolute z-[200] mt-1 w-full rounded-lg bg-[hsl(var(--card))] border border-white/[0.12] shadow-2xl overflow-hidden">
-                  <div className="p-2 border-b border-white/[0.06] sticky top-0 bg-[hsl(var(--card))]">
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        autoFocus
-                        value={allCountrySearch}
-                        onChange={(e) => setAllCountrySearch(e.target.value)}
-                        placeholder="Search country..."
-                        className="w-full h-9 pl-9 pr-3 rounded-md bg-white/[0.04] border border-white/[0.08] text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
-                      />
-                    </div>
-                  </div>
-                  <div className="max-h-72 overflow-y-auto scrollbar-none bg-[hsl(var(--card))]">
-                    {filteredAllCountries.length === 0 ? (
-                      <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                        No countries match "{allCountrySearch}"
-                      </div>
-                    ) : (
-                      filteredAllCountries.map((c) => (
-                        <button
-                          key={c.code}
-                          onClick={() => {
-                            setAllCountry(c.code);
-                            // Clear range only if it doesn't belong to the new country.
-                            const cur = allRanges.find((r) => r.key === rangeName);
-                            if (!cur || cur.country_code !== c.code) setRangeName("");
-                            setAllCountryOpen(false);
-                            setAllCountrySearch("");
-                          }}
-                          className={cn(
-                            "w-full px-3 py-2.5 text-left text-sm flex items-center justify-between gap-2 hover:bg-white/[0.06] transition-colors",
-                            allCountry === c.code && "bg-primary/10 text-primary"
-                          )}
-                        >
-                          <span className="truncate">{c.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-mono font-semibold shrink-0">
-                            {c.count}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Range — filtered by selected country */}
-            <div className="space-y-2 relative min-w-0 sm:col-span-1" ref={rangeRef}>
-              <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
-                <span>Range</span>
-                <span className="text-[10px] text-muted-foreground/70 font-normal">
-                  {filteredRanges.length} ranges
-                </span>
-              </label>
-              <button
-                type="button"
-                onClick={() => allCountry && setRangeOpen((v) => !v)}
-                disabled={!allCountry}
-                className="w-full min-h-[2.75rem] py-2 rounded-lg bg-white/[0.04] border border-white/[0.1] px-3 text-sm text-foreground focus:outline-none focus:border-primary/50 flex items-start justify-between gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <span className={cn("min-w-0 break-words leading-tight", !selectedRange && "text-muted-foreground")}>
-                  {!allCountry
-                    ? "Pick a country first"
-                    : selectedRange ? (
-                      <>
-                        {isHotRange(selectedRange.name) && <span className="mr-1">🔥</span>}
-                        {labelForRange(selectedRange.name)}
-                        <span className="ml-2 inline-block text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold whitespace-nowrap">
-                          {selectedRange.count} avail
-                        </span>
-                      </>
-                    ) : filteredRanges.length === 0 ? "No ranges for this country" : "Select a range..."}
-                </span>
-                <ChevronDown className={cn("w-4 h-4 mt-0.5 text-muted-foreground transition-transform shrink-0", rangeOpen && "rotate-180")} />
-              </button>
-              {rangeOpen && allCountry && (
-                <div className="absolute z-[200] mt-1 w-full rounded-lg bg-[hsl(var(--card))] border border-white/[0.12] shadow-2xl overflow-hidden">
-                  <div className="p-2 border-b border-white/[0.06] sticky top-0 bg-[hsl(var(--card))]">
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <input
-                        autoFocus
-                        value={rangeSearch}
-                        onChange={(e) => setRangeSearch(e.target.value)}
-                        placeholder="Search range..."
-                        className="w-full h-9 pl-9 pr-3 rounded-md bg-white/[0.04] border border-white/[0.08] text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
-                      />
-                    </div>
-                  </div>
-                  <div className="max-h-72 overflow-y-auto scrollbar-none bg-[hsl(var(--card))]">
-                    {filteredRanges.length === 0 ? (
-                      <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                        No ranges for {selectedAllCountry?.name || allCountry}
-                      </div>
-                    ) : (
-                      filteredRanges.map((r) => (
-                        <button
-                          key={r.name}
-                          onClick={() => { setRangeName(r.name); setRangeOpen(false); setRangeSearch(""); }}
-                          className={cn(
-                            "w-full px-3 py-2.5 text-left text-sm flex items-start justify-between gap-2 hover:bg-white/[0.06] transition-colors",
-                            rangeName === r.name && "bg-primary/10 text-primary"
-                          )}
-                        >
-                          <span className="min-w-0 break-words flex items-start gap-1.5 leading-tight">
-                            {isHotRange(r.name) && (
-                              <span title="Hot — high allocation rate in the last hour" className="shrink-0">🔥</span>
-                            )}
-                            {labelForRange(r.name)}
-                          </span>
-                          <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0",
-                            r.count > 50 ? "bg-neon-green/15 text-neon-green" :
-                            r.count > 10 ? "bg-neon-amber/15 text-neon-amber" :
-                            "bg-destructive/15 text-destructive"
-                          )}>
-                            {r.count} avail
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <Button
-              onClick={handleGetNumber}
-              disabled={loading || maintenanceMode || usedToday >= dailyLimit || !rangeName}
-              className="h-11 w-full lg:w-auto lg:min-w-[180px] sm:col-span-2 lg:col-span-1 bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground font-semibold hover:opacity-90 border-0"
-            >
-              {loading ? (
-                <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-              ) : (
-                <>
-                  <Hash className="w-4 h-4 mr-2" />
-                  Get {quantity > 1 ? `${quantity} Numbers` : "Number"}
-                </>
-              )}
-            </Button>
-          </div>
-        ) : provider === "ims" || provider === "msi" || provider === "all" ? (
-          /* ============ Admin range-based servers (B/C/All): single Range dropdown ============ */
+        {provider === "ims" || provider === "msi" ? (
+          /* ============ Server B/C (range-based): single Range dropdown ============ */
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-end">
             <div className="space-y-2 relative" ref={rangeRef}>
               <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
@@ -980,9 +500,9 @@ const AgentGetNumber = () => {
                 <span className={cn("truncate", !selectedRange && "text-muted-foreground")}>
                   {selectedRange ? (
                     <>
-                      {labelForRange(selectedRange.name)}
+                      {selectedRange.name}
                       <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-neon-green/15 text-neon-green font-semibold">
-                        {selectedRange.count} avail{providerTagForRange(selectedRange.name) ? ` · ${providerTagForRange(selectedRange.name)}` : ""}
+                        {selectedRange.count} avail
                       </span>
                     </>
                   ) : ranges.length === 0 ? "No ranges available — wait for refill" : "Select a range..."}
@@ -1019,21 +539,14 @@ const AgentGetNumber = () => {
                             rangeName === r.name && "bg-primary/10 text-primary"
                           )}
                         >
-                          <span className="truncate">{labelForRange(r.name)}</span>
-                          <span className="flex items-center gap-1.5 shrink-0">
-                            {providerTagForRange(r.name) && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-muted-foreground font-mono">
-                                {providerTagForRange(r.name)}
-                              </span>
-                            )}
-                            <span className={cn(
-                              "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold",
-                              r.count > 50 ? "bg-neon-green/15 text-neon-green" :
-                              r.count > 10 ? "bg-neon-amber/15 text-neon-amber" :
-                              "bg-destructive/15 text-destructive"
-                            )}>
-                              {r.count} avail
-                            </span>
+                          <span className="truncate">{r.name}</span>
+                          <span className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold shrink-0",
+                            r.count > 50 ? "bg-neon-green/15 text-neon-green" :
+                            r.count > 10 ? "bg-neon-amber/15 text-neon-amber" :
+                            "bg-destructive/15 text-destructive"
+                          )}>
+                            {r.count}
                           </span>
                         </button>
                       ))
@@ -1196,7 +709,6 @@ const AgentGetNumber = () => {
           </div>
         </div>
       </GlassCard>
-      )}
 
       {numbers.length > 0 && (() => {
         const totalPages = Math.max(1, Math.ceil(numbers.length / PAGE_SIZE));
@@ -1435,62 +947,6 @@ const AgentGetNumber = () => {
         </GlassCard>
         );
       })()}
-
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent className="bg-[hsl(var(--card))] border border-white/[0.1]">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-display">Confirm allocation</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <p>
-                  You are about to allocate{" "}
-                  <span className="text-foreground font-semibold">{quantity}</span>{" "}
-                  number{quantity > 1 ? "s" : ""} from:
-                </p>
-                {confirmSummary && (
-                  <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3 space-y-1">
-                    <div className="text-foreground font-medium break-words">
-                      {confirmSummary.friendly}
-                    </div>
-                    <div className="text-xs">
-                      <span className="text-neon-green font-semibold">
-                        {confirmSummary.count} available
-                      </span>
-                      {confirmSummary.providerLabel && (
-                        <span className="text-muted-foreground"> · {confirmSummary.providerLabel}</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <p className="text-xs">
-                  Tip: confirm to proceed, or cancel to pick a different range.
-                </p>
-                <label className="flex items-center gap-2 text-xs cursor-pointer select-none pt-1">
-                  <input
-                    type="checkbox"
-                    checked={skipAllConfirm}
-                    onChange={(e) => setSkipAllConfirm(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.04] accent-neon-cyan"
-                  />
-                  <span>Don't ask again on this device</span>
-                </label>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setConfirmOpen(false);
-                runAllocation();
-              }}
-              className="bg-gradient-to-r from-primary to-neon-magenta text-primary-foreground"
-            >
-              Confirm & Get {quantity > 1 ? `${quantity} Numbers` : "Number"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 };

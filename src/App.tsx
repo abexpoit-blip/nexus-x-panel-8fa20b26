@@ -10,7 +10,6 @@ import { NotificationProvider } from "@/contexts/NotificationContext";
 import { NotificationPanel } from "@/components/NotificationPanel";
 import { AppLayout } from "@/layouts/AppLayout";
 import { Pages } from "@/lib/lazyPages";
-import { RouteBoundary } from "@/components/RouteBoundary";
 
 // Eager-load auth pages (small + first paint)
 import Login from "@/pages/Login";
@@ -28,7 +27,6 @@ const AgentProfile = Pages["/agent/profile"].L;
 const AgentLeaderboard = Pages["/agent/leaderboard"].L;
 const AgentInbox = Pages["/agent/inbox"].L;
 const AgentHistory = Pages["/agent/history"].L;
-const AgentOtpAudit = Pages["/agent/otp-audit"].L;
 
 const AdminDashboard = Pages["/admin/dashboard"].L;
 const AdminProviders = Pages["/admin/providers"].L;
@@ -42,12 +40,6 @@ const AdminSecurity = Pages["/admin/security"].L;
 const AdminImsStatus = Pages["/admin/ims-status"].L;
 const AdminMsiStatus = Pages["/admin/msi-status"].L;
 const AdminNumPanelStatus = Pages["/admin/numpanel-status"].L;
-const AdminIprnSmsStatus = Pages["/admin/iprn-sms-status"].L;
-const AdminIprnSmsV2Status = Pages["/admin/iprn-sms-v2-status"].L;
-const AdminIprnSmsDeliveries = Pages["/admin/iprn-sms-deliveries"].L;
-const AdminIprnSmsV2Deliveries = Pages["/admin/iprn-sms-v2-deliveries"].L;
-const AdminSeven1telStatus = Pages["/admin/seven1tel-status"].L;
-const AdminBots = Pages["/admin/bots"].L;
 const AdminProviderSettings = Pages["/admin/provider-settings"].L;
 const AdminWithdrawals = Pages["/admin/withdrawals"].L;
 const AdminTgBot = Pages["/admin/tg-bot"].L;
@@ -83,7 +75,7 @@ const AuthPage = ({ children }: { children: React.ReactNode }) => {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
-        transition={{ type: "tween", ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number], duration: 0.18 }}
+        transition={{ type: "tween", ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number], duration: 0.3 }}
         className="min-h-screen"
       >
         {children}
@@ -96,14 +88,9 @@ const AppRoutes = () => {
   const location = useLocation();
 
   return (
-    <RouteBoundary routeKey={location.pathname}>
-      <Suspense fallback={<PageFallback />}>
-        {/* IMPORTANT: do NOT wrap <Routes> in AnimatePresence mode="wait".
-            That blocks Suspense from rendering its fallback while a lazy
-            chunk is in flight, which produced the "black screen, must
-            reload" bug when clicking menu items. Per-screen animation
-            still works via AuthPage / AnimatedOutlet wrappers below. */}
-        <Routes location={location}>
+    <Suspense fallback={<PageFallback />}>
+      <AnimatePresence mode="wait">
+        <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/login" element={<AuthPage><Login /></AuthPage>} />
           <Route path="/register" element={<AuthPage><Register /></AuthPage>} />
@@ -117,7 +104,6 @@ const AppRoutes = () => {
             <Route path="/agent/console" element={<AgentConsole />} />
             <Route path="/agent/my-numbers" element={<AgentMyNumbers />} />
             <Route path="/agent/history" element={<AgentHistory />} />
-            <Route path="/agent/otp-audit" element={<AgentOtpAudit />} />
             <Route path="/agent/summary" element={<AgentSummary />} />
             <Route path="/agent/payments" element={<AgentPayments />} />
             <Route path="/agent/profile" element={<AgentProfile />} />
@@ -139,12 +125,6 @@ const AppRoutes = () => {
             <Route path="/admin/ims-status" element={<AdminImsStatus />} />
             <Route path="/admin/msi-status" element={<AdminMsiStatus />} />
             <Route path="/admin/numpanel-status" element={<AdminNumPanelStatus />} />
-            <Route path="/admin/iprn-sms-status" element={<AdminIprnSmsStatus />} />
-            <Route path="/admin/iprn-sms-v2-status" element={<AdminIprnSmsV2Status />} />
-            <Route path="/admin/iprn-sms-deliveries" element={<AdminIprnSmsDeliveries />} />
-            <Route path="/admin/iprn-sms-v2-deliveries" element={<AdminIprnSmsV2Deliveries />} />
-            <Route path="/admin/seven1tel-status" element={<AdminSeven1telStatus />} />
-            <Route path="/admin/bots" element={<AdminBots />} />
             <Route path="/admin/provider-settings" element={<AdminProviderSettings />} />
             <Route path="/admin/tg-bot" element={<AdminTgBot />} />
             <Route path="/admin/notifications" element={<AdminNotifications />} />
@@ -152,8 +132,8 @@ const AppRoutes = () => {
 
           <Route path="*" element={<NotFound />} />
         </Routes>
-      </Suspense>
-    </RouteBoundary>
+      </AnimatePresence>
+    </Suspense>
   );
 };
 

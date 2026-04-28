@@ -23,22 +23,18 @@ const Login = () => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    try {
-      const loggedInUser = await login(username, password, "agent");
-      if (loggedInUser.role === "admin") {
-        // Admins must use the dedicated admin portal — block here for separation
-        setError("Admins must sign in via the admin portal");
-        return;
-      }
-      navigate("/agent/dashboard");
-    } catch (err) {
-      // Surface the REAL server message ("Account suspended", "Account
-      // pending admin approval", network error, etc.) instead of always
-      // showing "Invalid username or password".
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setLoading(false);
+    const loggedInUser = await login(username, password);
+    setLoading(false);
+    if (!loggedInUser) {
+      setError("Invalid username or password");
+      return;
     }
+    if (loggedInUser.role === "admin") {
+      // Admins must use the dedicated admin portal — block here for separation
+      setError("Admins must sign in via the admin portal");
+      return;
+    }
+    navigate("/agent/dashboard");
   };
 
   return (
