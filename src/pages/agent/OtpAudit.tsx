@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   RefreshCw, ScrollText, Search, CheckCircle2, XCircle, Radio,
-  AlertTriangle, Wallet, ChevronDown, Link2, Wifi, Clock,
+  AlertTriangle, Wallet, ChevronDown, Clock,
 } from "lucide-react";
 
 type AuditRow = {
@@ -98,31 +98,6 @@ const AgentOtpAudit = () => {
   }, [rows, search]);
 
   // Group most recent scrape events per provider for the debug panel.
-  // Backend stores endpoint as a full URL with query string — we parse it
-  // so agents can see exactly which date range / currency the bot used.
-  const scrapeDebug = useMemo(() => {
-    const seen = new Map<string, AuditRow>();
-    for (const r of rows) {
-      if (r.event !== "scrape_ok" && r.event !== "scrape_fail") continue;
-      if (!seen.has(r.provider)) seen.set(r.provider, r);
-    }
-    return Array.from(seen.values()).map((r) => {
-      let path = r.endpoint || "";
-      const params: Array<[string, string]> = [];
-      try {
-        if (r.endpoint) {
-          // Endpoint may be a relative path like "/api/.../sms.json?date_from=..."
-          const u = new URL(r.endpoint, "https://x.local");
-          path = u.pathname;
-          u.searchParams.forEach((v, k) => params.push([k, v]));
-        }
-      } catch {
-        /* ignore parse errors — show raw endpoint */
-      }
-      return { row: r, path, params };
-    });
-  }, [rows]);
-
   // Last 8 successfully credited OTPs — quick "did my OTP land?" panel.
   const lastCredited = useMemo(
     () => rows.filter((r) => r.event === "credited").slice(0, 8),
@@ -203,83 +178,6 @@ const AgentOtpAudit = () => {
           );
         })}
       </div>
-
-      {/* Scraper debug panel — last request URL + params per provider */}
-      {scrapeDebug.length > 0 && (
-        <GlassCard>
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <Wifi className="w-4 h-4 text-neon-cyan" />
-              <h2 className="text-sm font-display font-bold text-foreground">Scraper Debug — Last Request</h2>
-            </div>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              per provider
-            </span>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {scrapeDebug.map(({ row, path, params }) => {
-              const ok = row.event === "scrape_ok";
-              return (
-                <div
-                  key={`${row.provider}-${row.id}`}
-                  className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-foreground font-mono uppercase font-bold">
-                        {row.provider}
-                      </span>
-                      <span className={cn(
-                        "text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md border",
-                        ok
-                          ? "text-neon-green bg-neon-green/10 border-neon-green/30"
-                          : "text-destructive bg-destructive/10 border-destructive/30"
-                      )}>
-                        {ok ? "OK" : "FAIL"}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground font-mono">{ago(row.ts)}</span>
-                  </div>
-
-                  <div className="flex items-start gap-1.5 text-[11px] font-mono text-muted-foreground break-all">
-                    <Link2 className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/60" />
-                    <span className="text-foreground/90">{path || "—"}</span>
-                  </div>
-
-                  {params.length > 0 && (
-                    <div className="mt-2 grid grid-cols-2 gap-1.5">
-                      {params.map(([k, v]) => (
-                        <div key={k} className="text-[10px] font-mono bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-1">
-                          <span className="text-muted-foreground/70">{k}=</span>
-                          <span className="text-foreground">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="mt-2 flex items-center gap-3 text-[11px] font-mono">
-                    <span className="text-muted-foreground">
-                      rows_seen: <span className="text-foreground font-bold">{row.rows_seen ?? 0}</span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      matched: <span className="text-neon-amber font-bold">{row.matches_found ?? 0}</span>
-                    </span>
-                    {row.currency && (
-                      <span className="text-muted-foreground">
-                        currency: <span className="text-neon-amber font-bold">{row.currency}</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {row.detail && (
-                    <div className="mt-1.5 text-[11px] text-muted-foreground/80">{row.detail}</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </GlassCard>
-      )}
 
       {/* Last 8 credited OTPs — quick scan */}
       {lastCredited.length > 0 && (

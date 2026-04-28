@@ -45,6 +45,19 @@ router.use(async (req, res, next) => {
     });
     return res.json(data);
   } catch (e) {
+    // For READ-only status/job polls we never want to break the admin UI —
+    // return a 200 with a stub status so the page renders its controls and a
+    // "worker busy / offline" indicator instead of being stuck on "Loading…".
+    const isStatusRead =
+      req.method === 'GET' &&
+      (/-(status|numbers-job)$/.test(req.path) || req.path === '/autopool' || /^\/autopool\/[^/]+$/.test(req.path));
+    if (isStatusRead) {
+      return res.json({
+        status: null,
+        workerOffline: true,
+        workerError: e.message,
+      });
+    }
     const status = e.status || (e.code === 'ECONNREFUSED' ? 503 : 502);
     return res.status(status).json({
       error: 'Worker process is not responding. Run deploy.sh to start nexus-workers.',
